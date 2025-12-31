@@ -34,18 +34,21 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   // 处理导航跳转 - 核心逻辑：Fit View + Optional Context Switch
   // shouldOpenPopover: true = 跳转并打开新表格(关闭旧的); false = 仅跳转视角
   const handleJumpToEntity = useCallback((targetEntityName: string, shouldOpenPopover: boolean = false) => {
+    if (!targetEntityName) return;
+    const safeTargetName = targetEntityName.trim();
     const nodes = getNodes();
     
     // 1. 尝试精确匹配 ID
-    let targetNode = nodes.find(n => n.id === targetEntityName);
+    let targetNode = nodes.find(n => n.id === safeTargetName);
     
     // 2. 如果没找到，尝试忽略大小写匹配 (增加容错)
     if (!targetNode) {
-        targetNode = nodes.find(n => n.id.toLowerCase() === targetEntityName.toLowerCase());
+        targetNode = nodes.find(n => n.id.toLowerCase() === safeTargetName.toLowerCase());
     }
 
     if (targetNode) {
       const targetId = targetNode.id;
+      console.log(`[EntityNode] Jumping to: ${targetId} (Popover: ${shouldOpenPopover})`);
 
       // 1. Zoom to node (移动视角)
       fitView({
@@ -61,7 +64,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         switchActiveEntity(id, targetId);
       }
     } else {
-        console.warn(`[EntityNode] Target entity not found: ${targetEntityName}`);
+        console.warn(`[EntityNode] Target entity not found: "${safeTargetName}"`);
     }
   }, [getNodes, fitView, switchActiveEntity, id]);
 
@@ -339,10 +342,11 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
       {/* This renders INSIDE the node container, moving with it, but positioned absolutely to the right. */}
       {showEntityDetails && (
         <div 
-            className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in"
-            onMouseDown={(e) => e.stopPropagation()} // Enable text selection/scrolling without dragging node
-            onClick={(e) => e.stopPropagation()}
-            onWheel={(e) => e.stopPropagation()} // Prevent canvas zoom when scrolling table
+            // Important: 'nodrag' prevents ReactFlow from dragging the node when interacting with the table.
+            // 'nowheel' prevents the canvas from zooming when scrolling the table.
+            // We REMOVED manual onMouseDown/onClick stopPropagation which was blocking inner click events.
+            className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in nodrag nowheel"
+            onClick={(e) => e.stopPropagation()} // Optional: Prevents selecting/deselecting nodes when clicking empty table space
         >
             <div className="bg-content1 rounded-lg shadow-2xl border border-divider overflow-hidden flex flex-col max-h-[600px] ring-1 ring-black/5">
                 <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
