@@ -147,8 +147,11 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
                       // 均匀分布算法：(index + 1) / (count + 1) * 100%
                       const offset = ((index + 1) * 100) / (count + 1);
                       
-                      // 构造唯一的 Handle ID
-                      const handleId = `${pos}-${index}-${conn.type}`; 
+                      // [CRITICAL FIX]: 
+                      // Handle ID 必须是确定的，不能依赖 Position 或 Index，否则拖动时 ID 变化会导致连线断裂。
+                      // 我们使用 Edge ID + Role 作为唯一标识。
+                      // 这样即使 Handle 从 Top 移动到 Left，它的 ID 仍然不变，React Flow 就能保持连接。
+                      const handleId = `${conn.edgeId}-${conn.type}`;
                       
                       dynamicHandles.push({
                           id: handleId,
@@ -212,7 +215,7 @@ const EntityNode = ({ data, selected }: NodeProps) => {
 
         return (
           <Handle 
-            key={handle.id}
+            key={handle.id} // Stable Key based on stable ID
             id={handle.id}
             type={handle.type}
             position={handle.position}
@@ -339,9 +342,12 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         
         // 3. 更新状态
         setNodes(newNodes);
-        setEdges(newEdges);
+        // 重要优化：如果 Edge ID 和 Handle ID 逻辑不变，其实 setEdges 是可选的。
+        // 但为了确保首次拖动初始化等情况，我们还是调用它。
+        // 由于 Handle ID 现在是稳定的（基于 Edge ID），这一步不会引起 Edge 重建，只会更新引用。
+        setEdges(newEdges); 
     });
-  }, [setNodes, setEdges]); // 移除 edges 和 nodes 依赖，使用 Ref
+  }, [setNodes, setEdges]); 
 
   useEffect(() => {
     if (!url) return;
