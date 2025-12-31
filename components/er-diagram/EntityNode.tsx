@@ -31,8 +31,9 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
     return () => clearTimeout(timer);
   }, [isExpanded, id, updateNodeInternals]);
 
-  // 处理导航跳转 - 核心逻辑：Fit View + Update Context
-  const handleJumpToEntity = useCallback((targetEntityName: string) => {
+  // 处理导航跳转 - 核心逻辑：Fit View + Optional Context Switch
+  // shouldOpenPopover: true = 跳转并打开新表格(关闭旧的); false = 仅跳转视角
+  const handleJumpToEntity = useCallback((targetEntityName: string, shouldOpenPopover: boolean = false) => {
     const nodes = getNodes();
     const targetNode = nodes.find(n => n.id === targetEntityName);
 
@@ -43,8 +44,12 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         padding: 0.5,
         duration: 800,
       });
-      // 2. Switch active entity: Close current (id), Open target (targetEntityName)
-      switchActiveEntity(id, targetEntityName);
+      
+      // 2. Switch active entity ONLY if requested (e.g. from inside the table)
+      // From entity card navigation, we only want to jump, not trigger the pop.
+      if (shouldOpenPopover) {
+        switchActiveEntity(id, targetEntityName);
+      }
     }
   }, [getNodes, fitView, switchActiveEntity, id]);
 
@@ -93,10 +98,11 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const hiddenCount = data.properties.length - 12;
 
   return (
-    // Root Wrapper: Manages Z-Index so the open table floats above other nodes
+    // Root Wrapper: Manages Z-Index. 
+    // If details are shown, set a very high z-index (2000) so the absolute table overlays other nodes.
     <div 
         className="relative group" 
-        style={{ zIndex: showEntityDetails ? 1000 : undefined }}
+        style={{ zIndex: showEntityDetails ? 2000 : undefined }}
     >
       {/* --- Main Node Card --- */}
       <div className={`
@@ -241,7 +247,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                               {/* FK Relation Section */}
                               {fkInfo && (
                                   <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1 cursor-pointer hover:bg-secondary/20 transition-colors"
-                                      onClick={(e) => { e.stopPropagation(); handleJumpToEntity(fkInfo.targetEntity); }}
+                                      onClick={(e) => { e.stopPropagation(); handleJumpToEntity(fkInfo.targetEntity, false); }}
                                   >
                                       <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
                                           <Link2 size={10} /> Foreign Key Relation
@@ -296,7 +302,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                               <div 
                                   key={nav.name} 
                                   className="group flex items-center justify-start gap-2 p-1.5 rounded-sm bg-content1/50 hover:bg-content1 hover:shadow-sm border border-transparent hover:border-secondary/20 transition-all cursor-pointer text-secondary-700"
-                                  onClick={(e) => { e.stopPropagation(); handleJumpToEntity(cleanType); }}
+                                  onClick={(e) => { e.stopPropagation(); handleJumpToEntity(cleanType, false); }}
                                   title={`Jump to ${cleanType}`}
                               >
                                   <span className="flex items-center gap-1.5 truncate w-full">
@@ -349,7 +355,8 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                         keys={data.keys} 
                         getFkInfo={getForeignKeyInfo}
                         onJumpToEntity={(name) => {
-                            handleJumpToEntity(name);
+                            // Link inside Table -> Jump AND Open Popover
+                            handleJumpToEntity(name, true);
                         }}
                         />
                 </ScrollShadow>
