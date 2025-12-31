@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { NextUIProvider, Tabs, Tab, Input, Button, Chip } from "@nextui-org/react";
-import { detectODataVersion, ODataVersion } from '@/utils/odata-helper';
+import { detectODataVersion, parseMetadataToSchema, ODataVersion, ParsedSchema } from '@/utils/odata-helper';
 import ODataERDiagram from '@/components/ODataERDiagram';
 import QueryBuilder from '@/components/QueryBuilder';
 import MockDataGenerator from '@/components/MockDataGenerator';
@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [url, setUrl] = useState('');
   const [odataVersion, setOdataVersion] = useState<ODataVersion>('Unknown');
   const [isValidating, setIsValidating] = useState(false);
+  const [schema, setSchema] = useState<ParsedSchema | null>(null);
 
   useEffect(() => {
     // 从 Hash 读取 URL
@@ -37,9 +38,31 @@ const App: React.FC = () => {
   const validateAndLoad = async (targetUrl: string) => {
     if (!targetUrl) return;
     setIsValidating(true);
-    const ver = await detectODataVersion(targetUrl);
-    setOdataVersion(ver);
-    setIsValidating(false);
+    setSchema(null); // Reset schema during load
+
+    try {
+        // 1. 统一获取 Metadata XML
+        const metadataUrl = targetUrl.endsWith('$metadata') ? targetUrl : `${targetUrl.replace(/\/$/, '')}/$metadata`;
+        const res = await fetch(metadataUrl);
+        if (!res.ok) throw new Error("Fetch failed");
+        
+        const xmlText = await res.text();
+        
+        // 2. 统一检测版本 (基于 XML 内容)
+        const ver = await detectODataVersion(xmlText, true);
+        setOdataVersion(ver);
+
+        // 3. 统一解析 Schema
+        const parsedSchema = parseMetadataToSchema(xmlText);
+        setSchema(parsedSchema);
+
+    } catch (e) {
+        console.error("Failed to load OData service:", e);
+        setOdataVersion('Unknown');
+        setSchema(null);
+    } finally {
+        setIsValidating(false);
+    }
   };
 
   const handleUrlChange = (val: string) => setUrl(val);
@@ -93,7 +116,7 @@ const App: React.FC = () => {
 
         {/* 主内容区域 */}
         <main className="flex-1 w-full h-full relative overflow-hidden bg-content2/50 p-2 md:p-4">
-          {odataVersion === 'Unknown' && !isValidating ? (
+          {!schema && !isValidating ? (
             <div className="flex flex-col items-center justify-center h-full text-default-400 gap-4">
               <div className="w-20 h-20 bg-content3 rounded-full flex items-center justify-center mb-2 shadow-inner">
                 <Search size={32} className="opacity-50" />
@@ -119,17 +142,17 @@ const App: React.FC = () => {
               >
                 <Tab key="er" title={<div className="flex items-center gap-2"><span>ER Diagram</span></div>}>
                   <div className="h-full w-full relative overflow-hidden">
-                     <ODataERDiagram url={url} />
+                     <ODataERDiagram url={url} schema={schema} isLoading={isValidating} />
                   </div>
                 </Tab>
                 <Tab key="query" title={<div className="flex items-center gap-2"><span>Query Builder</span></div>}>
                   <div className="h-full w-full p-0">
-                    <QueryBuilder url={url} version={odataVersion} isDark={isDark} />
+                    <QueryBuilder url={url} version={odataVersion} isDark={isDark} schema={schema} />
                   </div>
                 </Tab>
                 <Tab key="mock" title={<div className="flex items-center gap-2"><span>Mock Data</span></div>}>
                   <div className="h-full w-full p-4 overflow-y-auto">
-                    <MockDataGenerator url={url} version={odataVersion} />
+                    <MockDataGenerator url={url} version={odataVersion} schema={schema} />
                   </div>
                 </Tab>
               </Tabs>

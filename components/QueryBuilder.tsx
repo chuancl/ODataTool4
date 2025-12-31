@@ -5,7 +5,7 @@ import {
   Selection, Chip, Tabs, Tab
 } from "@nextui-org/react";
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
-import { generateSAPUI5Code, ODataVersion, parseMetadataToSchema, EntityType } from '@/utils/odata-helper';
+import { generateSAPUI5Code, ODataVersion, ParsedSchema, EntityType } from '@/utils/odata-helper';
 import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download } from 'lucide-react';
 
 // Code Mirror & Formatting Imports
@@ -20,14 +20,12 @@ interface Props {
   url: string;
   version: ODataVersion;
   isDark: boolean;
+  schema: ParsedSchema | null;
 }
 
-const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
+const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const [entitySets, setEntitySets] = useState<string[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<string>('');
-  
-  // 元数据 Schema 状态
-  const [schemas, setSchemas] = useState<EntityType[]>([]);
   
   // 查询参数状态
   const [filter, setFilter] = useState('');
@@ -49,65 +47,52 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
   const [codePreview, setCodePreview] = useState('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
 
-  // 1. 初始化：加载 EntitySets 和 Metadata
+  // 1. 初始化：使用传入的 Schema 填充 EntitySets
   useEffect(() => {
-    if(!url) return;
-    const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+    if (!schema) return;
     
-    // 1.1 获取 Entity Sets (用于主下拉框)
-    fetch(baseUrl, { headers: { 'Accept': 'application/json' } }) 
-      .then(async r => {
-        const text = await r.text();
-        try {
-          return JSON.parse(text);
-        } catch {
-          return null;
-        }
-      }) 
-      .then(data => {
-        let sets: string[] = [];
-        if (data && data.d && Array.isArray(data.d.EntitySets)) {
-             sets = data.d.EntitySets; // V2
-        } else if (data && data.value && Array.isArray(data.value)) {
-             sets = data.value.map((v: any) => v.name); // V4
-        } else {
-             sets = ['Products', 'Orders', 'Customers', 'Employees', 'Suppliers', 'Categories']; 
-        }
-        setEntitySets(sets);
-        if (sets.length > 0) setSelectedEntity(sets[0]);
-      });
+    // 从 schema.entitySets 中提取名称
+    // 如果没有 entitySets (解析失败或没有), 尝试从 entities 名称推断 (fallback)
+    let sets: string[] = [];
+    if (schema.entitySets && schema.entitySets.length > 0) {
+        sets = schema.entitySets.map(es => es.name);
+    } else if (schema.entities && schema.entities.length > 0) {
+        sets = schema.entities.map(e => e.name + 's'); // Simple pluralization fallback
+    }
 
-    // 1.2 获取 Metadata (用于 Select/Expand 字段提示)
-    const metadataUrl = baseUrl.endsWith('/') ? `${baseUrl}$metadata` : `${baseUrl}/$metadata`;
-    fetch(metadataUrl)
-      .then(res => res.text())
-      .then(xml => {
-         const { entities } = parseMetadataToSchema(xml);
-         setSchemas(entities);
-      })
-      .catch(err => console.error("Metadata fetch failed in QueryBuilder", err));
+    setEntitySets(sets);
+    if (sets.length > 0) setSelectedEntity(sets[0]);
+  }, [schema]);
 
-  }, [url]);
-
-  // 计算当前选中实体的 Schema 信息
+  // 计算当前选中实体的 Schema 信息 (用于智能感知)
   const currentSchema = useMemo(() => {
-      if (!selectedEntity || schemas.length === 0) return null;
+      if (!selectedEntity || !schema || !schema.entities) return null;
+      
+      // 1. 尝试从 EntitySets 映射中找到对应的 EntityType 名称
+      const setInfo = schema.entitySets.find(es => es.name === selectedEntity);
+      if (setInfo) {
+          // EntityType 可能是 "Namespace.Name" 或只是 "Name"
+          const typeName = setInfo.entityType.split('.').pop();
+          const matchedEntity = schema.entities.find(e => e.name === typeName);
+          if (matchedEntity) return matchedEntity;
+      }
+
+      // 2. Fallback: 模糊匹配 Entity 名称
       // 尝试匹配 EntitySet 名称和 EntityType 名称
-      // 1. 精确匹配
-      let match = schemas.find(s => s.name === selectedEntity);
-      // 2. 尝试去 's' (简单的单数化匹配，例如 Sets: Products -> Type: Product)
+      let match = schema.entities.find(s => s.name === selectedEntity);
+      // 尝试去 's' (简单的单数化匹配，例如 Sets: Products -> Type: Product)
       if (!match && selectedEntity.endsWith('s')) {
           const singular = selectedEntity.slice(0, -1);
-          match = schemas.find(s => s.name === singular);
+          match = schema.entities.find(s => s.name === singular);
       }
-      // 3. 尝试包含匹配
+      // 尝试包含匹配
       if (!match) {
-          match = schemas.find(s => selectedEntity.includes(s.name));
+          match = schema.entities.find(s => selectedEntity.includes(s.name));
       }
       return match;
-  }, [selectedEntity, schemas]);
+  }, [selectedEntity, schema]);
 
-  // Expand Options Helper to avoid children type error
+  // Expand Options Helper
   const expandOptions = useMemo(() => {
     if (!currentSchema) return [];
     if (currentSchema.navigationProperties.length === 0) {
@@ -145,7 +130,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
     setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
   }, [url, selectedEntity, filter, select, expand, top, skip, count, version]);
 
-  // 3. 执行查询
+  // 3. 执行查询 (这里的 fetch 必须保留，因为是实际执行查询)
   const executeQuery = async () => {
     setLoading(true);
     setRawXmlResult('// 正在加载 XML...');

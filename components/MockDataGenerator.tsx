@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { Button, Input, Card, CardBody, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Chip } from "@nextui-org/react";
 import { faker } from '@faker-js/faker';
-import { ODataVersion, generateSAPUI5Code } from '@/utils/odata-helper';
+import { ODataVersion, generateSAPUI5Code, ParsedSchema } from '@/utils/odata-helper';
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 import { Sparkles, Code2, Plus } from 'lucide-react';
 
 interface Props {
   url: string;
   version: ODataVersion;
+  schema: ParsedSchema | null;
 }
 
-const MockDataGenerator: React.FC<Props> = ({ url, version }) => {
+const MockDataGenerator: React.FC<Props> = ({ url, version, schema }) => {
   const [count, setCount] = useState('5');
   const [mockData, setMockData] = useState<any[]>([]);
   const { isOpen, onOpen, onOpenChange } = useDisclosure();

@@ -11,7 +11,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { parseMetadataToSchema } from '@/utils/odata-helper';
+import { ParsedSchema } from '@/utils/odata-helper';
 import { Button, Spinner, Switch } from "@nextui-org/react";
 import { Zap } from 'lucide-react';
 import { calculateDynamicLayout } from './er-diagram/layout';
@@ -25,6 +25,8 @@ const nodeTypes = { entity: EntityNode };
 
 interface Props {
   url: string;
+  schema: ParsedSchema | null;
+  isLoading: boolean;
 }
 
 // --------------------------------------------------------
@@ -39,17 +41,15 @@ const ODataERDiagram: React.FC<Props> = (props) => {
 };
 
 
-const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
+const ODataERDiagramContent: React.FC<Props> = ({ url, schema, isLoading }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [loading, setLoading] = useState(false);
-  const [hasData, setHasData] = useState(false);
   const [isPerformanceMode, setIsPerformanceMode] = useState(false); // 默认关闭性能模式
   const [activeEntityIds, setActiveEntityIds] = useState<string[]>([]); // Global Active Entity IDs for Popovers
+  const [isProcessingLayout, setIsProcessingLayout] = useState(false);
 
   // Context Helpers
   const addActiveEntity = useCallback((id: string) => {
-    // 逻辑修改：即使 ID 已存在，也将其移动到数组末尾（Bring to Front）
     setActiveEntityIds(prev => {
         const others = prev.filter(e => e !== id);
         return [...others, id];
@@ -61,7 +61,6 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   }, []);
 
   const switchActiveEntity = useCallback((fromId: string, toId: string) => {
-    // 逻辑修改：移除旧ID，移除可能已存在的对应新ID，将新ID加到末尾（Bring to Front）
     setActiveEntityIds(prev => {
         const others = prev.filter(e => e !== fromId && e !== toId);
         return [...others, toId];
@@ -98,34 +97,31 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   }, [setNodes, setEdges]);
 
   // [REAL-TIME DRAG]
-  // 实时拖动处理：如果开启性能模式，则跳过计算，仅由 ReactFlow 处理节点位移
   const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
     if (isPerformanceMode) return; 
     performLayoutUpdate(draggedNodes);
   }, [isPerformanceMode, performLayoutUpdate]); 
 
   // [DRAG STOP]
-  // 拖动结束：强制进行一次完整布局计算，确保连线和端口位置正确（尤其是在性能模式下）
   const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
       performLayoutUpdate(draggedNodes);
   }, [performLayoutUpdate]);
 
   useEffect(() => {
-    if (!url) return;
-    setLoading(true);
+    if (!schema || !schema.entities) {
+        setNodes([]);
+        setEdges([]);
+        return;
+    }
+    
+    setIsProcessingLayout(true);
 
-    const loadData = async () => {
+    const generateDiagram = async () => {
       try {
-        const metadataUrl = url.endsWith('$metadata') ? url : `${url.replace(/\/$/, '')}/$metadata`;
-        const res = await fetch(metadataUrl);
-        if (!res.ok) throw new Error("Fetch failed");
+        const { entities, namespace } = schema;
         
-        const xml = await res.text();
-        const { entities, namespace } = parseMetadataToSchema(xml);
-
         if (entities.length === 0) {
-            setHasData(false);
-            setLoading(false);
+            setIsProcessingLayout(false);
             return;
         }
 
@@ -185,7 +181,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           type: 'entity',
           data: { 
             label: e.name, 
-            namespace, // Pass namespace for details
+            namespace, 
             properties: e.properties, 
             keys: e.keys,
             navigationProperties: e.navigationProperties,
@@ -196,7 +192,6 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
         }));
 
         const getNodeDimensions = (propCount: number, navCount: number) => {
-            // Initial dimensions estimation
             const visibleProps = Math.min(propCount, 12);
             const visibleNavs = Math.min(navCount, 8);
             const extraHeight = (navCount > 0 ? 30 : 0) + (propCount > 12 ? 20 : 0) + (navCount > 8 ? 20 : 0);
@@ -224,7 +219,6 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
         const layoutedGraph = await elk.layout(elkGraph);
         
-        // 构造基础 ReactFlow Node/Edge 对象
         const preCalcNodes: Node[] = initialNodesRaw.map(node => {
           const elkNode = layoutedGraph.children?.find(n => n.id === node.id);
           return {
@@ -257,17 +251,15 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
         setNodes(finalNodes);
         setEdges(finalEdges);
-        setHasData(true);
       } catch (err) {
         console.error("ER Diagram generation failed", err);
-        setHasData(false);
       } finally {
-        setLoading(false);
+        setIsProcessingLayout(false);
       }
     };
 
-    loadData();
-  }, [url]);
+    generateDiagram();
+  }, [schema]); // Only runs when schema object changes (fetched once by parent)
 
   // 处理节点点击事件：多选/反选逻辑
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
@@ -291,13 +283,10 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
     });
   }, []);
 
-  // 监听 background 点击，重置视图
   const onPaneClick = useCallback(() => {
       setHighlightedIds(new Set());
-      // Do NOT clear active popovers per requirement (only close on X or Jump)
   }, []);
 
-  // 监听 highlightedIds 变化，批量更新节点和边的样式
   useEffect(() => {
       if (highlightedIds.size === 0) {
           setNodes((nds) => nds.map(n => ({
@@ -352,18 +341,10 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
       }));
   }, [highlightedIds, setNodes, setEdges]);
 
-  // 监听 activeEntityIds 变化，提升选中节点的层级 (Z-Index)，防止 Popover 被遮挡
   useEffect(() => {
     setNodes((nds) => nds.map(n => {
         const activeIndex = activeEntityIds.indexOf(n.id);
-        
-        // Dynamic Z-Index Strategy:
-        // - Inactive nodes: 0
-        // - Active nodes: 1000 + index in active array.
-        // This ensures the most recently interacted entity (last in array) is always on top.
         const targetZIndex = activeIndex !== -1 ? 1000 + activeIndex : 0;
-        
-        // Only update if changed to avoid unnecessary re-renders
         if (n.zIndex !== targetZIndex) {
             return { ...n, zIndex: targetZIndex };
         }
@@ -373,22 +354,23 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
   const resetView = () => {
      setHighlightedIds(new Set());
-     setActiveEntityIds([]); // Close all when manually resetting via button
+     setActiveEntityIds([]); 
   };
 
   return (
     <div className="w-full h-full relative bg-content2/30">
-      {loading && (
+      {(isLoading || isProcessingLayout) && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm gap-4">
           <Spinner size="lg" color="primary" />
-          <p className="text-default-500 font-medium">Analyzing OData Metadata...</p>
+          <p className="text-default-500 font-medium">
+             {isLoading ? "Fetching Metadata..." : "Calculating Layout..."}
+          </p>
         </div>
       )}
       
-      {!loading && !hasData && (
+      {!isLoading && !isProcessingLayout && (!schema || !schema.entities || schema.entities.length === 0) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-default-400">
            <p>No Entities found or Metadata parse error.</p>
-           <Button size="sm" variant="light" color="primary" onPress={() => window.location.reload()}>Retry</Button>
         </div>
       )}
 
@@ -403,7 +385,6 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
         <Button size="sm" color="primary" variant="flat" onPress={resetView}>重置视图</Button>
       </div>
       
-      {/* Provide DiagramContext to all Nodes */}
       <DiagramContext.Provider value={{ activeEntityIds, addActiveEntity, removeActiveEntity, switchActiveEntity }}>
         <ReactFlow
             nodes={nodes}

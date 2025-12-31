@@ -27,6 +27,17 @@ export interface EntityType {
   }[];
 }
 
+export interface EntitySet {
+    name: string;
+    entityType: string;
+}
+
+export interface ParsedSchema {
+    entities: EntityType[];
+    entitySets: EntitySet[];
+    namespace: string;
+}
+
 interface AssociationEnd {
     role: string;
     type: string;
@@ -38,24 +49,25 @@ interface AssociationConstraint {
     dependent: { role: string; propertyRef: string };
 }
 
-// 1. OData 检测与版本识别
-export const detectODataVersion = async (url: string): Promise<ODataVersion> => {
+// 1. OData 检测与版本识别 (优化：支持传入文本直接判断，减少重复请求)
+export const detectODataVersion = async (urlOrXml: string, isXmlContent: boolean = false): Promise<ODataVersion> => {
   try {
-    let metadataUrl = url;
-    if (!url.endsWith('$metadata')) {
-        metadataUrl = url.endsWith('/') ? `${url}$metadata` : `${url}/$metadata`;
+    let text = urlOrXml;
+    
+    if (!isXmlContent) {
+        let metadataUrl = urlOrXml;
+        if (!urlOrXml.endsWith('$metadata')) {
+            metadataUrl = urlOrXml.endsWith('/') ? `${urlOrXml}$metadata` : `${urlOrXml}/$metadata`;
+        }
+        const response = await fetch(metadataUrl);
+        text = await response.text();
     }
-
-    const response = await fetch(metadataUrl);
-    const text = await response.text();
     
     if (text.includes('Version="4.0"')) return 'V4';
     if (text.includes('Version="2.0"')) return 'V2';
     if (text.includes('Version="3.0"')) return 'V3';
     
-    const versionHeader = response.headers.get('DataServiceVersion');
-    if (versionHeader?.startsWith('2.0')) return 'V2';
-    
+    // 如果是 fetch 响应头判断逻辑比较复杂，这里主要依赖 XML 内容判断
     return 'Unknown';
   } catch (e) {
     console.error("Failed to detect OData version", e);
@@ -64,17 +76,17 @@ export const detectODataVersion = async (url: string): Promise<ODataVersion> => 
 };
 
 // 2. 解析 Metadata
-export const parseMetadataToSchema = (xmlText: string) => {
+export const parseMetadataToSchema = (xmlText: string): ParsedSchema => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, "application/xml");
   const schemas = doc.getElementsByTagName("Schema"); 
   
-  if (!schemas || schemas.length === 0) return { entities: [], namespace: '' };
+  if (!schemas || schemas.length === 0) return { entities: [], entitySets: [], namespace: '' };
 
   const schema = schemas[0];
   const namespace = schema.getAttribute("Namespace") || "";
 
-  // 存储 Association 详情: Roles 和 Constraints
+  // 存储 Association 详情
   const associationMap: Record<string, { 
       roles: Record<string, AssociationEnd>,
       constraint?: AssociationConstraint 
@@ -88,7 +100,6 @@ export const parseMetadataToSchema = (xmlText: string) => {
 
     const fullName = namespace ? `${namespace}.${name}` : name;
     
-    // 解析 Ends
     const roles: Record<string, AssociationEnd> = {};
     const ends = at.getElementsByTagName("End");
     for (let j = 0; j < ends.length; j++) {
@@ -98,7 +109,6 @@ export const parseMetadataToSchema = (xmlText: string) => {
         if (role) roles[role] = { role, type, multiplicity };
     }
 
-    // 解析 ReferentialConstraint (V2/V3)
     let constraint: AssociationConstraint | undefined;
     const refConst = at.getElementsByTagName("ReferentialConstraint")[0];
     if (refConst) {
@@ -121,9 +131,24 @@ export const parseMetadataToSchema = (xmlText: string) => {
 
     const assocData = { roles, constraint };
     associationMap[fullName] = assocData;
-    associationMap[name] = assocData; // Fallback without namespace
+    associationMap[name] = assocData; 
   }
 
+  // 解析 EntitySets
+  const entitySets: EntitySet[] = [];
+  const entityContainers = doc.getElementsByTagName("EntityContainer");
+  for (let i = 0; i < entityContainers.length; i++) {
+      const sets = entityContainers[i].getElementsByTagName("EntitySet");
+      for (let j = 0; j < sets.length; j++) {
+          const name = sets[j].getAttribute("Name");
+          const type = sets[j].getAttribute("EntityType");
+          if (name && type) {
+              entitySets.push({ name, entityType: type });
+          }
+      }
+  }
+
+  // 解析 EntityTypes
   const entities: EntityType[] = [];
   const entityTypes = schema.getElementsByTagName("EntityType");
 
@@ -131,7 +156,6 @@ export const parseMetadataToSchema = (xmlText: string) => {
     const et = entityTypes[i];
     const name = et.getAttribute("Name") || "Unknown";
     
-    // Keys
     const keys: string[] = [];
     const keyNode = et.getElementsByTagName("Key")[0];
     if (keyNode) {
@@ -139,35 +163,24 @@ export const parseMetadataToSchema = (xmlText: string) => {
         for (let k = 0; k < propRefs.length; k++) keys.push(propRefs[k].getAttribute("Name") || "");
     }
 
-    // Properties
     const properties: EntityProperty[] = [];
     const props = et.getElementsByTagName("Property");
     for (let p = 0; p < props.length; p++) {
         const propNode = props[p];
-        const nullableAttr = propNode.getAttribute("Nullable");
-        const maxLengthAttr = propNode.getAttribute("MaxLength");
-        const fixedLengthAttr = propNode.getAttribute("FixedLength");
-        const precisionAttr = propNode.getAttribute("Precision");
-        const scaleAttr = propNode.getAttribute("Scale");
-        const unicodeAttr = propNode.getAttribute("Unicode");
-        const defaultValueAttr = propNode.getAttribute("DefaultValue");
-        const concurrencyModeAttr = propNode.getAttribute("ConcurrencyMode");
-
         properties.push({
             name: propNode.getAttribute("Name") || "",
             type: propNode.getAttribute("Type") || "",
-            nullable: nullableAttr !== "false", // Default is true usually
-            maxLength: maxLengthAttr ? parseInt(maxLengthAttr) : undefined,
-            fixedLength: fixedLengthAttr === "true",
-            precision: precisionAttr ? parseInt(precisionAttr) : undefined,
-            scale: scaleAttr ? parseInt(scaleAttr) : undefined,
-            unicode: unicodeAttr !== "false", // Default usually true for string
-            defaultValue: defaultValueAttr || undefined,
-            concurrencyMode: concurrencyModeAttr || undefined
+            nullable: propNode.getAttribute("Nullable") !== "false",
+            maxLength: propNode.getAttribute("MaxLength") ? parseInt(propNode.getAttribute("MaxLength")!) : undefined,
+            fixedLength: propNode.getAttribute("FixedLength") === "true",
+            precision: propNode.getAttribute("Precision") ? parseInt(propNode.getAttribute("Precision")!) : undefined,
+            scale: propNode.getAttribute("Scale") ? parseInt(propNode.getAttribute("Scale")!) : undefined,
+            unicode: propNode.getAttribute("Unicode") !== "false",
+            defaultValue: propNode.getAttribute("DefaultValue") || undefined,
+            concurrencyMode: propNode.getAttribute("ConcurrencyMode") || undefined
         });
     }
 
-    // NavigationProperties
     const navProps: EntityType['navigationProperties'] = [];
     const navs = et.getElementsByTagName("NavigationProperty");
     
@@ -184,7 +197,7 @@ export const parseMetadataToSchema = (xmlText: string) => {
         let constraints: { sourceProperty: string; targetProperty: string }[] = [];
 
         if (v4Type) {
-            // V4 Logic (Simplified)
+            // V4 Logic
             if (v4Type.startsWith("Collection(")) {
                 targetType = v4Type.slice(11, -1);
                 targetMult = "*";
@@ -192,7 +205,6 @@ export const parseMetadataToSchema = (xmlText: string) => {
                 targetType = v4Type;
                 targetMult = "1";
             }
-            // V4 referential constraints are inside NavigationProperty
             const v4Ref = navs[n].getElementsByTagName("ReferentialConstraint");
             for(let r=0; r<v4Ref.length; r++) {
                 const prop = v4Ref[r].getAttribute("Property");
@@ -214,15 +226,11 @@ export const parseMetadataToSchema = (xmlText: string) => {
                     sourceMult = fromEnd.multiplicity;
                 }
 
-                // Resolve Constraints
                 if (assocData.constraint) {
                     const c = assocData.constraint;
-                    // Check if current entity (FromRole) is Principal or Dependent
                     if (c.principal.role === fromRole && c.dependent.role === toRole) {
-                         // Source is Principal
                          constraints.push({ sourceProperty: c.principal.propertyRef, targetProperty: c.dependent.propertyRef });
                     } else if (c.dependent.role === fromRole && c.principal.role === toRole) {
-                         // Source is Dependent
                          constraints.push({ sourceProperty: c.dependent.propertyRef, targetProperty: c.principal.propertyRef });
                     }
                 }
@@ -242,11 +250,42 @@ export const parseMetadataToSchema = (xmlText: string) => {
     entities.push({ name, keys, properties, navigationProperties: navProps });
   }
 
-  return { entities, namespace };
+  return { entities, entitySets, namespace };
 };
 
-// 3. SAPUI5 Code Generator (Unchanged)
+// 3. SAPUI5 Code Generator
 export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
-    // ... (Code omitted for brevity, logic remains the same)
-    return `// Code for ${op} on ${es}`; 
+    // 简单的 SAPUI5 代码生成示例
+    let code = `// SAPUI5 OData ${v} Code for ${op} on ${es}\n`;
+    code += `var oModel = this.getView().getModel();\n`;
+    
+    if (op === 'read') {
+        const filters = p.filters?.map((f: any) => `new Filter("${f.field}", FilterOperator.${f.operator}, "${f.value}")`).join(', ');
+        const urlParams: any = {};
+        if (p.expand) urlParams.$expand = p.expand;
+        if (p.select) urlParams.$select = p.select;
+        if (p.top) urlParams.$top = p.top;
+        if (p.skip) urlParams.$skip = p.skip;
+        if (p.inlinecount) urlParams.$inlinecount = 'allpages';
+        
+        code += `oModel.read("/${es}", {\n`;
+        if (filters) code += `  filters: [${filters}],\n`;
+        if (Object.keys(urlParams).length > 0) code += `  urlParameters: ${JSON.stringify(urlParams, null, 2)},\n`;
+        code += `  success: function(oData, response) { console.log(oData); },\n`;
+        code += `  error: function(oError) { console.error(oError); }\n`;
+        code += `});`;
+    } else if (op === 'delete') {
+         code += `oModel.remove("/${es}${p.key}", {\n`;
+         code += `  success: function() { console.log("Deleted"); },\n`;
+         code += `  error: function(oError) { console.error(oError); }\n`;
+         code += `});`;
+    } else if (op === 'create') {
+        code += `var oData = ${JSON.stringify(p.data, null, 2)};\n`;
+        code += `oModel.create("/${es}", oData, {\n`;
+        code += `  success: function(oData, response) { console.log("Created"); },\n`;
+        code += `  error: function(oError) { console.error(oError); }\n`;
+        code += `});`;
+    }
+
+    return code; 
 };
