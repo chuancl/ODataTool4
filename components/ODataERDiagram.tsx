@@ -17,9 +17,10 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { parseMetadataToSchema } from '@/utils/odata-helper';
+import { parseMetadataToSchema, EntityProperty } from '@/utils/odata-helper';
 import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip } from "@nextui-org/react";
-import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database } from 'lucide-react';
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus } from 'lucide-react';
+import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 
 const elk = new ELK();
 
@@ -49,6 +50,98 @@ interface DynamicHandleConfig {
 }
 
 // --------------------------------------------------------
+// Sub-Component: Entity Details Table
+// --------------------------------------------------------
+const EntityDetailsTable = ({ 
+    properties, 
+    keys, 
+    getFkInfo 
+}: { 
+    properties: EntityProperty[], 
+    keys: string[], 
+    getFkInfo: (name: string) => any 
+}) => {
+    const columnHelper = createColumnHelper<EntityProperty>();
+
+    const columns = useMemo(() => [
+        columnHelper.accessor('name', {
+            header: 'Field',
+            cell: info => {
+                const isKey = keys.includes(info.getValue());
+                return (
+                    <div className="flex items-center gap-1">
+                        {isKey && <Key size={10} className="text-warning shrink-0" />}
+                        <span className={isKey ? "font-bold text-foreground" : "text-default-700"}>
+                            {info.getValue()}
+                        </span>
+                    </div>
+                );
+            }
+        }),
+        columnHelper.accessor('type', {
+            header: 'Type',
+            cell: info => <span className="font-mono text-xs text-default-500">{info.getValue().split('.').pop()}</span>
+        }),
+        columnHelper.accessor('nullable', {
+            header: 'Null',
+            cell: info => info.getValue() ? <Check size={12} className="text-success opacity-50"/> : <Minus size={12} className="text-default-300"/>
+        }),
+        columnHelper.display({
+            id: 'relation',
+            header: 'Relation',
+            cell: info => {
+                const fk = getFkInfo(info.row.original.name);
+                if (!fk) return null;
+                return (
+                    <div className="flex flex-col text-[9px] leading-tight">
+                        <div className="flex items-center gap-1 text-secondary">
+                            <Link2 size={8} />
+                            <span className="font-bold">{fk.targetEntity}</span>
+                        </div>
+                        <span className="opacity-60 pl-3">.{fk.targetProperty}</span>
+                    </div>
+                );
+            }
+        })
+    ], [keys, getFkInfo]);
+
+    const table = useReactTable({
+        data: properties,
+        columns,
+        getCoreRowModel: getCoreRowModel(),
+    });
+
+    return (
+        <div className="w-full">
+            <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 z-20 bg-default-100 shadow-sm">
+                    {table.getHeaderGroups().map(headerGroup => (
+                        <tr key={headerGroup.id}>
+                            {headerGroup.headers.map(header => (
+                                <th key={header.id} className="p-2 text-[10px] font-bold text-default-500 uppercase tracking-wider border-b border-divider">
+                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                </th>
+                            ))}
+                        </tr>
+                    ))}
+                </thead>
+                <tbody>
+                    {table.getRowModel().rows.map((row, idx) => (
+                        <tr key={row.id} className={`border-b border-divider/50 last:border-0 ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/50'}`}>
+                            {row.getVisibleCells().map(cell => (
+                                <td key={cell.id} className="p-2 text-[10px]">
+                                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                </td>
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+// --------------------------------------------------------
 // Core Logic: 动态布局计算函数
 // --------------------------------------------------------
 const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
@@ -66,7 +159,6 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
       const targetNode = nodeMap.get(edge.target);
       if (!sourceNode || !targetNode) return { ...edge };
 
-      // 如果节点尚未渲染（例如刚展开），可能没有 width/height，使用估算值
       const sW = sourceNode.width || 250;
       const sH = sourceNode.height || 200;
       const tW = targetNode.width || 250;
@@ -155,7 +247,6 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
 
   // 当展开状态变化时，也需要更新内部布局
   useEffect(() => {
-    // 稍微延迟一下，等待 DOM 渲染完成高度变化
     const timer = setTimeout(() => updateNodeInternals(id), 50);
     return () => clearTimeout(timer);
   }, [isExpanded, id, updateNodeInternals]);
@@ -163,8 +254,6 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
   // 处理导航跳转
   const handleJumpToEntity = (e: React.MouseEvent, targetEntityName: string) => {
     e.stopPropagation();
-    // 尝试找到目标节点
-    // 假设 ID 就是 Entity Name (目前的逻辑是这样的)
     const targetId = targetEntityName;
     const nodes = getNodes();
     const targetNode = nodes.find(n => n.id === targetId);
@@ -181,14 +270,13 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
   };
 
   // 查找某个属性是否是外键，并返回关联信息
-  const getForeignKeyInfo = (propName: string) => {
+  const getForeignKeyInfo = useCallback((propName: string) => {
     if (!data.navigationProperties) return null;
     
     for (const nav of data.navigationProperties) {
       if (nav.constraints) {
         const constraint = nav.constraints.find((c: any) => c.sourceProperty === propName);
         if (constraint) {
-          // 清理 Target Type 名称
           let targetTypeClean = nav.targetType;
           if (targetTypeClean?.startsWith('Collection(')) targetTypeClean = targetTypeClean.slice(11, -1);
           targetTypeClean = targetTypeClean?.split('.').pop();
@@ -202,7 +290,7 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
       }
     }
     return null;
-  };
+  }, [data.navigationProperties]);
 
   const visibleProperties = isExpanded ? data.properties : data.properties.slice(0, 12);
   const hiddenCount = data.properties.length - 12;
@@ -214,14 +302,13 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
       ${selected ? 'border-primary shadow-2xl ring-2 ring-primary/30 z-50' : 'border-divider shadow-sm'}
     `}>
       
-      {/* Dynamic Handles */}
       {dynamicHandles.map((handle) => {
         const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
         const style: React.CSSProperties = {
           position: 'absolute',
           [isVertical ? 'left' : 'top']: `${handle.offset}%`,
           opacity: 0, 
-          width: '12px', height: '12px', // 稍微加大一点交互区域
+          width: '12px', height: '12px',
           zIndex: 10,
         };
 
@@ -233,125 +320,132 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
         return <Handle key={handle.id} id={handle.id} type={handle.type} position={handle.position} style={style} />;
       })}
 
-      {/* --- Entity Title Popover --- */}
-      <Popover 
-        isOpen={showEntityDetails} 
-        onOpenChange={setShowEntityDetails}
-        placement="right-start" 
-        offset={20}
-        shouldFlip
-        isDismissable={false} // 手动关闭
-        shouldCloseOnBlur={false} // 点击外部不关闭? 需求说 "鼠标移开pop不消失，需手动关闭" -> 所以用受控模式 + 按钮
-        motionProps={{
-            variants: {
-            enter: { y: 0, opacity: 1, scale: 1, transition: { duration: 0.15, ease: "easeOut" } },
-            exit: { y: 10, opacity: 0, scale: 0.95, transition: { duration: 0.1, ease: "easeIn" } },
-            },
-        }}
-      >
-        <PopoverTrigger>
-          <div 
-            className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md cursor-pointer hover:bg-primary/20 transition-colors flex items-center justify-center gap-2 group"
-            onClick={(e) => { e.stopPropagation(); setShowEntityDetails(true); }}
-          >
-             <Table2 size={14} />
-             <span>{data.label}</span>
-             <Info size={12} className="opacity-0 group-hover:opacity-50 transition-opacity" />
-          </div>
-        </PopoverTrigger>
-        <PopoverContent className="w-[320px] p-0">
-            <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden">
-                <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider">
-                    <div className="flex items-center gap-2 font-bold text-default-700">
-                        <Database size={16} className="text-primary"/>
-                        {data.label}
-                    </div>
-                    <Button isIconOnly size="sm" variant="light" onPress={() => setShowEntityDetails(false)}>
-                        <X size={16} />
-                    </Button>
-                </div>
-                <div className="p-4 flex flex-col gap-3 text-sm">
-                    <div className="grid grid-cols-3 gap-2">
-                        <div className="text-default-500">Namespace</div>
-                        <div className="col-span-2 font-mono text-xs bg-default-50 p-1 rounded">{data.namespace || 'N/A'}</div>
-                        
-                        <div className="text-default-500">Keys</div>
-                        <div className="col-span-2 flex flex-wrap gap-1">
-                            {data.keys.map((k: string) => (
-                                <Badge key={k} color="warning" variant="flat" size="sm" className="static">{k}</Badge>
-                            ))}
+      {/* --- Entity Title Header --- */}
+      <div className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md flex items-center justify-center gap-2 group">
+         <Table2 size={14} />
+         
+         <Popover 
+            isOpen={showEntityDetails} 
+            onOpenChange={setShowEntityDetails}
+            placement="right-start" 
+            offset={20}
+            shouldFlip
+            isDismissable={false} 
+            shouldCloseOnBlur={false}
+         >
+            <PopoverTrigger>
+                {/* 仅点击文字触发 Popover，同时阻止冒泡防止选中节点（或者允许选中？通常文字点击不应选中节点如果它触发了Pop） */}
+                <span 
+                    className="cursor-pointer hover:underline underline-offset-2 decoration-primary/50"
+                    onClick={(e) => { e.stopPropagation(); setShowEntityDetails(true); }}
+                >
+                    {data.label}
+                </span>
+            </PopoverTrigger>
+            <PopoverContent className="w-[400px] p-0">
+                <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden flex flex-col max-h-[500px]">
+                    <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
+                        <div className="flex items-center gap-2 font-bold text-default-700">
+                            <Database size={16} className="text-primary"/>
+                            {data.label}
+                            <span className="text-[10px] font-normal text-default-400 bg-white px-1 rounded border border-divider">{data.namespace}</span>
                         </div>
-
-                        <div className="text-default-500">Properties</div>
-                        <div className="col-span-2 text-default-700">{data.properties.length} fields</div>
-
-                        <div className="text-default-500">Relations</div>
-                        <div className="col-span-2 text-default-700">{data.navigationProperties?.length || 0} links</div>
+                        <Button isIconOnly size="sm" variant="light" onPress={() => setShowEntityDetails(false)}>
+                            <X size={16} />
+                        </Button>
+                    </div>
+                    
+                    <ScrollShadow className="flex-1 overflow-auto">
+                         <EntityDetailsTable 
+                            properties={data.properties} 
+                            keys={data.keys} 
+                            getFkInfo={getForeignKeyInfo}
+                         />
+                    </ScrollShadow>
+                    
+                    <div className="bg-default-50 p-2 text-[10px] text-default-400 text-center border-t border-divider shrink-0 flex justify-between px-4">
+                        <span>{data.properties.length} Properties</span>
+                        <span>{data.navigationProperties?.length || 0} Relations</span>
                     </div>
                 </div>
-                <div className="bg-default-50 p-2 text-xs text-default-400 text-center border-t border-divider">
-                    Entity Type Details
-                </div>
-            </div>
-        </PopoverContent>
-      </Popover>
+            </PopoverContent>
+         </Popover>
+
+         <Info size={12} className="opacity-0 group-hover:opacity-50 transition-opacity" />
+      </div>
 
       {/* Content Area */}
       <div className="p-2 flex flex-col gap-0.5 bg-content1 rounded-b-md">
         
         {/* --- Properties --- */}
-        {visibleProperties.map((prop: any) => {
+        {visibleProperties.map((prop: EntityProperty) => {
           const fieldColor = data.fieldColors?.[prop.name];
           const isKey = data.keys.includes(prop.name);
           const fkInfo = getForeignKeyInfo(prop.name);
 
           return (
-            <Popover key={prop.name} placement="right" showArrow offset={10}>
-                <PopoverTrigger>
-                    <div 
-                      className={`
-                        text-[10px] flex items-center justify-between p-1.5 rounded-sm border-l-2 transition-colors cursor-pointer group
-                        ${isKey ? 'bg-warning/10 text-warning-700 font-semibold' : 'text-default-600 hover:bg-default-100'}
-                        ${fieldColor ? '' : 'border-transparent'}
-                      `}
-                      style={fieldColor ? { borderColor: fieldColor, backgroundColor: `${fieldColor}15` } : {}}
-                      onClick={(e) => e.stopPropagation()} // 阻止触发节点点击
-                    >
-                       <span className="flex items-center gap-1.5 truncate max-w-[140px]">
-                         {isKey && <Key size={8} className="shrink-0 text-warning" />}
-                         {fkInfo && <Link2 size={8} className="shrink-0 text-secondary" />}
-                         <span style={fieldColor ? { color: fieldColor, fontWeight: 700 } : {}}>{prop.name}</span>
-                       </span>
-                       <span className="text-[9px] text-default-400 ml-1 opacity-70 font-mono group-hover:opacity-100">{prop.type.split('.').pop()}</span>
-                    </div>
-                </PopoverTrigger>
-                <PopoverContent className="p-3">
-                    <div className="text-xs flex flex-col gap-2 min-w-[200px]">
-                        <div className="font-bold flex items-center gap-2 border-b border-divider pb-1">
+            <div 
+              key={prop.name} 
+              className={`
+                text-[10px] flex items-center justify-between p-1.5 rounded-sm border-l-2 transition-colors group
+                ${isKey ? 'bg-warning/10 text-warning-700 font-semibold' : 'text-default-600'}
+                ${fieldColor ? '' : 'border-transparent'}
+              `}
+              style={fieldColor ? { borderColor: fieldColor, backgroundColor: `${fieldColor}15` } : {}}
+            >
+               <span className="flex items-center gap-1.5 truncate max-w-[140px]">
+                 {isKey && <Key size={8} className="shrink-0 text-warning" />}
+                 {fkInfo && <Link2 size={8} className="shrink-0 text-secondary" />}
+                 
+                 {/* 仅点击属性名触发 Popover */}
+                 <Popover placement="right" showArrow offset={10}>
+                    <PopoverTrigger>
+                        <span 
+                            className="cursor-pointer hover:text-primary transition-colors hover:underline decoration-dotted" 
+                            style={fieldColor ? { color: fieldColor, fontWeight: 700 } : {}}
+                            onClick={(e) => e.stopPropagation()}
+                        >
                             {prop.name}
-                            {isKey && <Chip size="sm" color="warning" variant="flat" className="h-5 text-[9px] px-1">PK</Chip>}
-                            {fkInfo && <Chip size="sm" color="secondary" variant="flat" className="h-5 text-[9px] px-1">FK</Chip>}
-                        </div>
-                        <div className="grid grid-cols-[60px_1fr] gap-1 text-default-600">
-                            <span className="text-default-400">Type:</span> 
-                            <span className="font-mono">{prop.type}</span>
-                        </div>
-                        
-                        {fkInfo && (
-                            <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1">
-                                <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
-                                    <Link2 size={10} /> Foreign Key Relation
-                                </div>
-                                <div className="grid grid-cols-[50px_1fr] gap-1 text-[10px]">
-                                    <span className="opacity-70">To:</span> <span className="font-bold">{fkInfo.targetEntity}</span>
-                                    <span className="opacity-70">Field:</span> <span className="font-mono">{fkInfo.targetProperty}</span>
-                                    <span className="opacity-70">Via:</span> <span className="italic opacity-80">{fkInfo.navName}</span>
-                                </div>
+                        </span>
+                    </PopoverTrigger>
+                    <PopoverContent className="p-3">
+                        <div className="text-xs flex flex-col gap-2 min-w-[200px]">
+                            <div className="font-bold flex items-center gap-2 border-b border-divider pb-1">
+                                {prop.name}
+                                {isKey && <Chip size="sm" color="warning" variant="flat" className="h-5 text-[9px] px-1">PK</Chip>}
+                                {fkInfo && <Chip size="sm" color="secondary" variant="flat" className="h-5 text-[9px] px-1">FK</Chip>}
                             </div>
-                        )}
-                    </div>
-                </PopoverContent>
-            </Popover>
+                            <div className="grid grid-cols-[60px_1fr] gap-1 text-default-600">
+                                <span className="text-default-400">Type:</span> 
+                                <span className="font-mono">{prop.type}</span>
+                                <span className="text-default-400">Nullable:</span>
+                                <span>{prop.nullable ? 'True' : 'False'}</span>
+                                {prop.maxLength && (
+                                    <>
+                                        <span className="text-default-400">Length:</span>
+                                        <span>{prop.maxLength}</span>
+                                    </>
+                                )}
+                            </div>
+                            
+                            {fkInfo && (
+                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1">
+                                    <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
+                                        <Link2 size={10} /> Foreign Key Relation
+                                    </div>
+                                    <div className="grid grid-cols-[50px_1fr] gap-1 text-[10px]">
+                                        <span className="opacity-70">To:</span> <span className="font-bold">{fkInfo.targetEntity}</span>
+                                        <span className="opacity-70">Field:</span> <span className="font-mono">{fkInfo.targetProperty}</span>
+                                        <span className="opacity-70">Via:</span> <span className="italic opacity-80">{fkInfo.navName}</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </PopoverContent>
+                 </Popover>
+               </span>
+               <span className="text-[9px] text-default-400 ml-1 opacity-70 font-mono">{prop.type.split('.').pop()}</span>
+            </div>
           );
         })}
 
