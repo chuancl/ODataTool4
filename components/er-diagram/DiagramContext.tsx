@@ -2,7 +2,14 @@ import React from 'react';
 
 // --- Context for Managing Active Popover State ---
 export type DiagramContextType = {
-  activeEntityId: string | null;
-  setActiveEntityId: (id: string | null) => void;
+  activeEntityIds: string[];
+  addActiveEntity: (id: string) => void;
+  removeActiveEntity: (id: string) => void;
+  switchActiveEntity: (fromId: string, toId: string) => void;
 };
-export const DiagramContext = React.createContext<DiagramContextType>({ activeEntityId: null, setActiveEntityId: () => {} });
+export const DiagramContext = React.createContext<DiagramContextType>({ 
+    activeEntityIds: [], 
+    addActiveEntity: () => {}, 
+    removeActiveEntity: () => {},
+    switchActiveEntity: () => {}
+});

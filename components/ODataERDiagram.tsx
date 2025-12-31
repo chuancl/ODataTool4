@@ -45,7 +45,20 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
   const [isPerformanceMode, setIsPerformanceMode] = useState(false); // 默认关闭性能模式
-  const [activeEntityId, setActiveEntityId] = useState<string | null>(null); // Global Active Entity for Popovers
+  const [activeEntityIds, setActiveEntityIds] = useState<string[]>([]); // Global Active Entity IDs for Popovers
+
+  // Context Helpers
+  const addActiveEntity = useCallback((id: string) => {
+    setActiveEntityIds(prev => prev.includes(id) ? prev : [...prev, id]);
+  }, []);
+
+  const removeActiveEntity = useCallback((id: string) => {
+    setActiveEntityIds(prev => prev.filter(e => e !== id));
+  }, []);
+
+  const switchActiveEntity = useCallback((fromId: string, toId: string) => {
+    setActiveEntityIds(prev => [...prev.filter(e => e !== fromId), toId]);
+  }, []);
 
   // 用于管理高亮节点 ID 的集合
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
@@ -273,7 +286,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   // 监听 background 点击，重置视图
   const onPaneClick = useCallback(() => {
       setHighlightedIds(new Set());
-      setActiveEntityId(null); // Close any active popover
+      // Do NOT clear active popovers per requirement (only close on X or Jump)
   }, []);
 
   // 监听 highlightedIds 变化，批量更新节点和边的样式
@@ -333,7 +346,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
   const resetView = () => {
      setHighlightedIds(new Set());
-     setActiveEntityId(null);
+     setActiveEntityIds([]); // Close all when manually resetting via button
   };
 
   return (
@@ -364,7 +377,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
       </div>
       
       {/* Provide DiagramContext to all Nodes */}
-      <DiagramContext.Provider value={{ activeEntityId, setActiveEntityId }}>
+      <DiagramContext.Provider value={{ activeEntityIds, addActiveEntity, removeActiveEntity, switchActiveEntity }}>
         <ReactFlow
             nodes={nodes}
             edges={edges}

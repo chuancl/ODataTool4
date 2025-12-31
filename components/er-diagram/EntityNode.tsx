@@ -14,15 +14,10 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const updateNodeInternals = useUpdateNodeInternals();
   const { fitView, getNodes } = useReactFlow();
   const [isExpanded, setIsExpanded] = useState(false);
-  const { activeEntityId, setActiveEntityId } = useContext(DiagramContext);
+  const { activeEntityIds, addActiveEntity, removeActiveEntity, switchActiveEntity } = useContext(DiagramContext);
 
   // Determine if this entity popover should be open
-  const showEntityDetails = activeEntityId === id;
-
-  const setShowEntityDetails = (open: boolean) => {
-    if (open) setActiveEntityId(id);
-    else if (activeEntityId === id) setActiveEntityId(null);
-  };
+  const showEntityDetails = activeEntityIds.includes(id);
 
   // 监听 Handles 变化
   const dynamicHandles: DynamicHandleConfig[] = data.dynamicHandles || [];
@@ -48,10 +43,10 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         padding: 0.5,
         duration: 800,
       });
-      // 2. Open target popover (closes current one automatically via Context)
-      setTimeout(() => setActiveEntityId(targetEntityName), 100); 
+      // 2. Switch active entity: Close current (id), Open target (targetEntityName)
+      switchActiveEntity(id, targetEntityName);
     }
-  }, [getNodes, fitView, setActiveEntityId]);
+  }, [getNodes, fitView, switchActiveEntity, id]);
 
   // Export CSV Function
   const handleExportCSV = () => {
@@ -128,7 +123,11 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
          
          <Popover 
             isOpen={showEntityDetails} 
-            onOpenChange={setShowEntityDetails}
+            onOpenChange={(open) => {
+                // Only allow opening via trigger click. 
+                // Closing is explicitly handled via X button or Jump.
+                if (open) addActiveEntity(id);
+            }}
             placement="right-start" 
             offset={20}
             shouldFlip
@@ -139,14 +138,14 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                 {/* 仅点击文字触发 Popover，同时阻止冒泡防止选中节点 */}
                 <span 
                     className="cursor-pointer hover:underline underline-offset-2 decoration-primary/50"
-                    onClick={(e) => { e.stopPropagation(); setShowEntityDetails(true); }}
+                    onClick={(e) => { e.stopPropagation(); addActiveEntity(id); }}
                 >
                     {data.label}
                 </span>
             </PopoverTrigger>
             <PopoverContent 
                 className="w-[850px] p-0" 
-                // 防止 Popover 内部点击冒泡导致 ReactFlow 画布暗化
+                // 防止 Popover 内部点击冒泡导致 ReactFlow 画布暗化或触发其他事件
                 onMouseDown={(e) => e.stopPropagation()} 
                 onClick={(e) => e.stopPropagation()}
             >
@@ -161,7 +160,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                            <Button size="sm" variant="flat" color="primary" onPress={handleExportCSV} startContent={<Download size={14} />}>
                               Export CSV
                            </Button>
-                           <Button isIconOnly size="sm" variant="light" onPress={() => setShowEntityDetails(false)}>
+                           <Button isIconOnly size="sm" variant="light" onPress={() => removeActiveEntity(id)}>
                                <X size={18} />
                            </Button>
                         </div>
