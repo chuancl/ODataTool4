@@ -9,6 +9,7 @@ import ReactFlow, {
   Position,
   NodeProps,
   Edge,
+  Node,
   useStore
 } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -43,6 +44,142 @@ interface DynamicHandleConfig {
   position: Position;
   offset: number; // 0-100%
 }
+
+// --------------------------------------------------------
+// Core Logic: 动态布局计算函数 (提取到组件外)
+// --------------------------------------------------------
+const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
+  // 1. 建立索引
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  
+  // 存储连接信息用于排序
+  // NodeID -> Position -> List of connections
+  const connections: Record<string, Record<string, any[]>> = {};
+
+  // 初始化结构
+  nodes.forEach(n => {
+    connections[n.id] = {
+        [Position.Top]: [],
+        [Position.Right]: [],
+        [Position.Bottom]: [],
+        [Position.Left]: []
+    };
+  });
+
+  // 2. 遍历边，确定每一条边的最佳连接方向
+  // 这一步决定了边是从哪个面出来的
+  const updatedEdges = edges.map(edge => {
+      const sourceNode = nodeMap.get(edge.source);
+      const targetNode = nodeMap.get(edge.target);
+      
+      if (!sourceNode || !targetNode) return { ...edge };
+
+      // 使用当前位置计算中心点
+      // 注意：如果 width/height 缺失，使用默认值
+      const sW = sourceNode.width || 220;
+      const sH = sourceNode.height || 150;
+      const tW = targetNode.width || 220;
+      const tH = targetNode.height || 150;
+
+      const sx = sourceNode.position.x + sW / 2;
+      const sy = sourceNode.position.y + sH / 2;
+      const tx = targetNode.position.x + tW / 2;
+      const ty = targetNode.position.y + tH / 2;
+
+      const dx = tx - sx;
+      const dy = ty - sy;
+      
+      let sourcePos: Position, targetPos: Position;
+
+      // 简单的方向判定逻辑: 哪个轴距离更远，就用哪个轴连接
+      if (Math.abs(dx) > Math.abs(dy)) {
+          // 水平距离大，左右连接
+          sourcePos = dx > 0 ? Position.Right : Position.Left;
+          targetPos = dx > 0 ? Position.Left : Position.Right;
+      } else {
+          // 垂直距离大，上下连接
+          sourcePos = dy > 0 ? Position.Bottom : Position.Top;
+          targetPos = dy > 0 ? Position.Top : Position.Bottom;
+      }
+
+      // 记录连接，用于后续排序
+      // 我们需要知道"对方"的坐标，以便让线不交叉
+      connections[sourceNode.id]?.[sourcePos]?.push({
+          edgeId: edge.id,
+          type: 'source',
+          otherX: tx,
+          otherY: ty
+      });
+
+      connections[targetNode.id]?.[targetPos]?.push({
+          edgeId: edge.id,
+          type: 'target',
+          otherX: sx,
+          otherY: sy
+      });
+
+      return { ...edge }; // 返回副本
+  });
+
+  // 3. 对每个节点的每个面进行排序，并生成 Handle
+  const updatedNodes = nodes.map(node => {
+      const dynamicHandles: DynamicHandleConfig[] = [];
+      const nodeConns = connections[node.id];
+
+      if (nodeConns) {
+          Object.values(Position).forEach(pos => {
+              const list = nodeConns[pos];
+              if (list && list.length > 0) {
+                  // 排序逻辑：
+                  // 如果是 Top/Bottom (垂直面)，按对方的 X 坐标排序 -> 保证线平行不交叉
+                  // 如果是 Left/Right (水平面)，按对方的 Y 坐标排序
+                  list.sort((a, b) => {
+                      if (pos === Position.Top || pos === Position.Bottom) {
+                          return a.otherX - b.otherX;
+                      } else {
+                          return a.otherY - b.otherY;
+                      }
+                  });
+
+                  // 生成均匀分布的 Handle
+                  list.forEach((conn, index) => {
+                      const count = list.length;
+                      // 均匀分布算法：(index + 1) / (count + 1) * 100%
+                      const offset = ((index + 1) * 100) / (count + 1);
+                      
+                      // 构造唯一的 Handle ID
+                      const handleId = `${pos}-${index}-${conn.type}`; 
+                      
+                      dynamicHandles.push({
+                          id: handleId,
+                          type: conn.type, // 'source' or 'target'
+                          position: pos,
+                          offset: offset
+                      });
+
+                      // 回填 Edge 的 handle ID
+                      const edge = updatedEdges.find((e: any) => e.id === conn.edgeId);
+                      if (edge) {
+                          if (conn.type === 'source') {
+                              edge.sourceHandle = handleId;
+                          } else {
+                              edge.targetHandle = handleId;
+                          }
+                      }
+                  });
+              }
+          });
+      }
+      
+      return {
+          ...node,
+          data: { ...node.data, dynamicHandles }
+      };
+  });
+
+  return { nodes: updatedNodes, edges: updatedEdges };
+};
+
 
 // 实体节点组件
 const EntityNode = ({ data, selected }: NodeProps) => {
@@ -159,6 +296,22 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
 
+  // 节点拖拽处理函数
+  const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, updatedNodes: Node[]) => {
+    // updatedNodes 包含最新的所有节点位置（包括正在拖拽的那个）
+    // 我们基于这些新位置重新计算所有连线和端口
+    
+    // 注意：这里需要传入当前的 edges，因为边的连接关系不变
+    // 我们这里使用函数式更新前的 edges 可能会有闭包问题，所以依赖项要加上 edges
+    // 但为了性能，ReactFlow 的 onNodeDrag 触发频率很高，calculateDynamicLayout 必须足够快
+    
+    const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(updatedNodes, edges);
+    
+    // 更新状态
+    setNodes(newNodes);
+    setEdges(newEdges);
+  }, [edges, setNodes, setEdges]);
+
   useEffect(() => {
     if (!url) return;
     setLoading(true);
@@ -231,7 +384,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         });
 
         // 2. 初始化节点 (先不带 Handles)
-        const initialNodes = entities.map((e) => ({
+        const initialNodesRaw = entities.map((e) => ({
           id: e.name,
           type: 'entity',
           data: { 
@@ -240,7 +393,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
             keys: e.keys,
             navigationProperties: e.navigationProperties,
             fieldColors: fieldColorMap[e.name] || {},
-            dynamicHandles: [] // 先置空，布局后再计算
+            dynamicHandles: [] 
           },
           position: { x: 0, y: 0 }
         }));
@@ -261,11 +414,11 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
             'elk.direction': 'RIGHT',
             'elk.spacing.nodeNode': '150', 
             'elk.layered.spacing.nodeNodeBetweenLayers': '300',
-            'elk.edgeRouting': 'SPLINES', // 使用样条曲线路由可能更顺滑
+            'elk.edgeRouting': 'SPLINES', 
             'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
             'elk.spacing.componentComponent': '200',
           },
-          children: initialNodes.map(n => ({ 
+          children: initialNodesRaw.map(n => ({ 
               id: n.id, 
               ...getNodeDimensions(n.data.properties.length, n.data.navigationProperties?.length || 0) 
           })), 
@@ -273,167 +426,41 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         };
 
         const layoutedGraph = await elk.layout(elkGraph);
-
-        // 4. --- 核心优化：动态 Port 分配与排序 ---
-        // 这一步的目的是确定每个边具体连接到节点的哪个位置，并保证不交叉
         
-        // 存储每个节点每个方向上的连接请求
-        // 结构: Map<NodeId, { Top: Connection[], Right: Connection[], ... }>
-        const nodeConnections: Record<string, Record<string, any[]>> = {};
-        const getConnections = (nodeId: string, side: Position) => {
-          if (!nodeConnections[nodeId]) nodeConnections[nodeId] = { [Position.Top]: [], [Position.Right]: [], [Position.Bottom]: [], [Position.Left]: [] };
-          return nodeConnections[nodeId][side];
-        };
-
-        // 最终的节点 Map，方便快速查找
-        const layoutedNodesMap = new Map();
-        
-        const finalNodes = initialNodes.map(node => {
+        // 构造基础 ReactFlow Node/Edge 对象
+        const preCalcNodes: Node[] = initialNodesRaw.map(node => {
           const elkNode = layoutedGraph.children?.find(n => n.id === node.id);
-          const newNode = {
+          return {
             ...node,
             position: { x: elkNode?.x || 0, y: elkNode?.y || 0 },
-            width: 220, // 实际渲染宽度
-            height: elkNode?.height ? elkNode.height - 30 : 200 // 修正一下高度
+            width: 220, 
+            height: elkNode?.height ? elkNode.height - 30 : 200
           };
-          layoutedNodesMap.set(node.id, newNode);
-          return newNode;
         });
 
-        // 4.1 遍历所有边，决定连接方向并加入列表
-        const finalEdges = rawEdges.map(e => {
-            const sourceNode = layoutedNodesMap.get(e.source);
-            const targetNode = layoutedNodesMap.get(e.target);
-            if (!sourceNode || !targetNode) return null;
-
-            const sx = sourceNode.position.x + sourceNode.width / 2;
-            const sy = sourceNode.position.y + sourceNode.height / 2;
-            const tx = targetNode.position.x + targetNode.width / 2;
-            const ty = targetNode.position.y + targetNode.height / 2;
-
-            const dx = tx - sx;
-            const dy = ty - sy;
-            
-            let sourcePos: Position, targetPos: Position;
-
-            // 简单的方向判定逻辑 (可以根据需要调整阈值)
-            if (Math.abs(dx) > Math.abs(dy)) {
-                // 水平距离大，左右连接
-                sourcePos = dx > 0 ? Position.Right : Position.Left;
-                targetPos = dx > 0 ? Position.Left : Position.Right;
-            } else {
-                // 垂直距离大，上下连接
-                sourcePos = dy > 0 ? Position.Bottom : Position.Top;
-                targetPos = dy > 0 ? Position.Top : Position.Bottom;
-            }
-
-            // 记录连接信息，用于后续排序
-            // 保存对方的坐标，这是排序的关键：
-            // 如果是在左右两侧的边，我们希望根据对方的 Y 坐标排序
-            // 如果是在上下两侧的边，我们希望根据对方的 X 坐标排序
-            getConnections(e.source, sourcePos).push({
-                edgeId: e.id,
-                type: 'source',
-                otherX: tx,
-                otherY: ty
-            });
-
-            getConnections(e.target, targetPos).push({
-                edgeId: e.id,
-                type: 'target',
-                otherX: sx,
-                otherY: sy
-            });
-
-            // 暂时返回不完整的 edge，后面会填入 handle id
-            return {
-                id: e.id,
-                source: e.source,
-                target: e.target,
-                data: { label: e.label, originalColor: e.color },
-                // 这里的 handle id 稍后生成
-                tempSourcePos: sourcePos,
-                tempTargetPos: targetPos,
-                sourceHandle: undefined as string | undefined,
-                targetHandle: undefined as string | undefined
-            };
-        }).filter(Boolean);
-
-        // 4.2 对连接进行排序并生成 Handle Config
-        finalNodes.forEach(node => {
-            const dynamicHandles: DynamicHandleConfig[] = [];
-            const connections = nodeConnections[node.id];
-
-            if (connections) {
-                Object.values(Position).forEach(pos => {
-                    const list = connections[pos];
-                    if (list && list.length > 0) {
-                        // 排序逻辑：
-                        // 如果是 Top/Bottom，按对方的 X 坐标从小到大排 (从左到右)
-                        // 如果是 Left/Right，按对方的 Y 坐标从小到大排 (从上到下)
-                        list.sort((a, b) => {
-                            if (pos === Position.Top || pos === Position.Bottom) {
-                                return a.otherX - b.otherX;
-                            } else {
-                                return a.otherY - b.otherY;
-                            }
-                        });
-
-                        // 生成 Handle
-                        list.forEach((conn, index) => {
-                            const count = list.length;
-                            // 均匀分布算法：(index + 1) * 100 / (count + 1)
-                            // 比如 count=1 -> 50%
-                            // count=2 -> 33%, 66%
-                            const offset = ((index + 1) * 100) / (count + 1);
-                            
-                            // 构造唯一的 Handle ID
-                            const handleId = `${pos}-${index}-${conn.type}`; // e.g. Right-0-source
-                            
-                            dynamicHandles.push({
-                                id: handleId,
-                                type: conn.type, // 'source' or 'target'
-                                position: pos,
-                                offset: offset
-                            });
-
-                            // 回填 Edge 的 handle ID
-                            const edge = finalEdges.find((e: any) => e.id === conn.edgeId);
-                            if (edge) {
-                                if (conn.type === 'source') {
-                                    edge.sourceHandle = handleId;
-                                } else {
-                                    edge.targetHandle = handleId;
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-            node.data.dynamicHandles = dynamicHandles;
-        });
-
-        // 4.3 生成最终的 Edge 对象
-        const realEdges: Edge[] = finalEdges.map((e: any) => ({
+        const preCalcEdges: Edge[] = rawEdges.map((e: any) => ({
             id: e.id,
             source: e.source,
             target: e.target,
-            sourceHandle: e.sourceHandle,
-            targetHandle: e.targetHandle,
-            type: 'smoothstep', // 使用平滑阶梯线，配合分散的端口效果最好
+            sourceHandle: undefined, // 待计算
+            targetHandle: undefined, // 待计算
+            type: 'smoothstep', 
             pathOptions: { borderRadius: 20 },
-            markerStart: { type: MarkerType.ArrowClosed, color: e.data.originalColor },
-            markerEnd: { type: MarkerType.ArrowClosed, color: e.data.originalColor },
+            markerStart: { type: MarkerType.ArrowClosed, color: e.color },
+            markerEnd: { type: MarkerType.ArrowClosed, color: e.color },
             animated: false,
-            style: { stroke: e.data.originalColor, strokeWidth: 1.5, opacity: 0.8 },
-            label: e.data.label,
-            labelStyle: { fill: e.data.originalColor, fontWeight: 700, fontSize: 10 },
+            style: { stroke: e.color, strokeWidth: 1.5, opacity: 0.8 },
+            label: e.label,
+            labelStyle: { fill: e.color, fontWeight: 700, fontSize: 10 },
             labelBgStyle: { fill: '#ffffff', fillOpacity: 0.7, rx: 4, ry: 4 },
-            data: e.data
+            data: { originalColor: e.color }
         }));
 
+        // 4. --- 核心优化：调用统一的布局计算函数 ---
+        const { nodes: finalNodes, edges: finalEdges } = calculateDynamicLayout(preCalcNodes, preCalcEdges);
+
         setNodes(finalNodes);
-        setEdges(realEdges);
+        setEdges(finalEdges);
         setHasData(true);
       } catch (err) {
         console.error("ER Diagram generation failed", err);
@@ -522,6 +549,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeDrag={onNodeDrag} 
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
         fitView
