@@ -97,8 +97,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
   // 3. 执行查询：同时获取 JSON 和 XML
   const executeQuery = async () => {
     setLoading(true);
-    setRawXmlResult('// Loading XML...');
-    setRawJsonResult('// Loading JSON...');
+    setRawXmlResult('// 正在加载 XML...');
+    setRawJsonResult('// 正在加载 JSON...');
     setQueryResult([]);
 
     try {
@@ -122,8 +122,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
         }
       } else {
         const errorMsg = jsonRes.status === 'fulfilled' 
-          ? `// HTTP Error: ${jsonRes.value.status} ${jsonRes.value.statusText}` 
-          : `// Request Failed: ${jsonRes.reason}`;
+          ? `// HTTP 错误: ${jsonRes.value.status} ${jsonRes.value.statusText}` 
+          : `// 请求失败: ${jsonRes.reason}`;
         setRawJsonResult(errorMsg);
       }
 
@@ -144,14 +144,14 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
         }
       } else {
         const errorMsg = xmlRes.status === 'fulfilled'
-          ? `<!-- HTTP Error: ${xmlRes.value.status} (该服务可能不支持 XML 格式) -->`
-          : `<!-- Request Failed: ${xmlRes.reason} -->`;
+          ? `<!-- HTTP 错误: ${xmlRes.value.status} (该服务可能不支持 XML 格式) -->`
+          : `<!-- 请求失败: ${xmlRes.reason} -->`;
         setRawXmlResult(errorMsg);
       }
 
     } catch (e: any) {
       console.error(e);
-      setRawJsonResult(`Error: ${e.message || e}`);
+      setRawJsonResult(`错误: ${e.message || e}`);
     } finally {
       setLoading(false);
     }
@@ -320,7 +320,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
             >
                 <div className="h-full flex flex-col">
                     <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
-                        <span className="text-xs font-bold px-2 text-warning-500">JSON Response</span>
+                        <span className="text-xs font-bold px-2 text-warning-500">JSON 响应结果</span>
                         <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawJsonResult)}>
                             <Copy size={14} />
                         </Button>
@@ -355,7 +355,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
             >
                 <div className="h-full flex flex-col">
                     <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
-                        <span className="text-xs font-bold px-2 text-primary-500">XML / Atom Response</span>
+                        <span className="text-xs font-bold px-2 text-primary-500">XML / Atom 响应结果</span>
                         <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawXmlResult)}>
                             <Copy size={14} />
                         </Button>
