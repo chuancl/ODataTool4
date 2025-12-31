@@ -109,20 +109,11 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const visibleProperties = isExpanded ? data.properties : data.properties.slice(0, 12);
   const hiddenCount = data.properties.length - 12;
 
-  // VISIBLE Static Handle Styles
-  // Made visible so users know where they can connect/drag edges
-  const staticHandleStyle: React.CSSProperties = { 
-      width: '10px', 
-      height: '10px', 
-      background: '#9CA3AF', // Gray-400 equivalent, visible but neutral
-      border: '2px solid white', 
-      borderRadius: '50%',
-      zIndex: 50,
-      transition: 'background 0.2s, transform 0.2s'
-  };
-  
-  // Dynamic handle style (still invisible usually as they are auto-managed, but kept for logic)
-  // We keep them transparent so they don't clutter, relying on static handles for manual overrides.
+  // VISIBLE Static Handle Styles - UPDATED to be "Bars"
+  // Used opacity 0 to be invisible but interactive. 
+  // Positioned to cover the edges.
+  const barThickness = '12px';
+  const barOffset = '-6px'; // Center the 12px bar on the 0px border
 
   return (
     // Root Wrapper: Manages Z-Index. 
@@ -130,55 +121,74 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         className="relative group" 
         style={{ zIndex: showEntityDetails ? 2000 : undefined }}
     >
-      {/* --- Static Handles for Manual Connections (Top/Right/Bottom/Left) --- */}
-      {/* VISIBLE PORTS: Users can drag edge ends here to manually route lines */}
-      {/* We apply a hover effect via CSS class or inline style logic if needed, but simple visible dots are better for UX here. */}
-      
+      {/* --- Static Handles (Bars) for Easy Connection --- */}
+      {/* Top Bar */}
       <Handle 
         id="static-top" 
         type="source" 
         position={Position.Top} 
-        style={{ ...staticHandleStyle, top: '-5px' }} 
-        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+        style={{ top: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
       />
+      <Handle 
+        id="static-top-t" 
+        type="target" 
+        position={Position.Top} 
+        style={{ top: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
+      />
+
+      {/* Right Bar */}
       <Handle 
         id="static-right" 
         type="source" 
         position={Position.Right} 
-        style={{ ...staticHandleStyle, right: '-5px' }} 
-        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+        style={{ right: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
       />
+       <Handle 
+        id="static-right-t" 
+        type="target" 
+        position={Position.Right} 
+        style={{ right: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
+      />
+
+      {/* Bottom Bar */}
       <Handle 
         id="static-bottom" 
         type="source" 
         position={Position.Bottom} 
-        style={{ ...staticHandleStyle, bottom: '-5px' }} 
-        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+        style={{ bottom: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
       />
+      <Handle 
+        id="static-bottom-t" 
+        type="target" 
+        position={Position.Bottom} 
+        style={{ bottom: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
+      />
+
+      {/* Left Bar */}
       <Handle 
         id="static-left" 
         type="source" 
         position={Position.Left} 
-        style={{ ...staticHandleStyle, left: '-5px' }} 
-        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+        style={{ left: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
       />
-      
-      {/* Target Handles - overlapping source handles visually to create a unified 'port' feel */}
-      <Handle id="static-top-t" type="target" position={Position.Top} style={{ ...staticHandleStyle, top: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
-      <Handle id="static-right-t" type="target" position={Position.Right} style={{ ...staticHandleStyle, right: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
-      <Handle id="static-bottom-t" type="target" position={Position.Bottom} style={{ ...staticHandleStyle, bottom: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
-      <Handle id="static-left-t" type="target" position={Position.Left} style={{ ...staticHandleStyle, left: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
+      <Handle 
+        id="static-left-t" 
+        type="target" 
+        position={Position.Left} 
+        style={{ left: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
+      />
 
-      {/* --- Dynamic Handles (Auto-Calculated) --- */}
+      {/* --- Dynamic Handles (Auto-Calculated) - Keep them as fallback for auto layout --- */}
       {dynamicHandles.map((handle) => {
         const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
         const style: React.CSSProperties = {
           position: 'absolute',
           [isVertical ? 'left' : 'top']: `${handle.offset}%`,
           opacity: 0, 
-          width: '8px', height: '8px',
-          zIndex: 11, // Slightly higher priority than static
-          background: 'transparent'
+          width: '1px', height: '1px',
+          zIndex: 5,
+          background: 'transparent',
+          pointerEvents: 'none' // Let static bars take precedence for interaction
         };
 
         if (handle.position === Position.Top) style.top = '-4px';

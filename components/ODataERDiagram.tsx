@@ -271,10 +271,10 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
             markerStart: { type: MarkerType.ArrowClosed, color: e.color },
             markerEnd: { type: MarkerType.ArrowClosed, color: e.color },
             animated: false,
-            // UPDATED: strokeWidth 4 (Default), interactionWidth 20, updatable true
-            style: { stroke: e.color, strokeWidth: 4, opacity: 0.8 },
-            interactionWidth: 20,
-            updatable: true, // Allow manual adjustments
+            // UPDATED: strokeWidth 5 (Default), interactionWidth 30
+            style: { stroke: e.color, strokeWidth: 5, opacity: 0.8 },
+            interactionWidth: 30, // Much easier to grab
+            updatable: true, 
             label: e.label,
             labelStyle: { fill: e.color, fontWeight: 700, fontSize: 10 },
             labelBgStyle: { fill: '#ffffff', fillOpacity: 0.7, rx: 4, ry: 4 },
@@ -334,8 +334,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           setEdges((eds) => eds.map(e => ({
               ...e, 
               animated: false, 
-              // UPDATED: strokeWidth 4
-              style: { stroke: e.data?.originalColor, strokeWidth: 4, opacity: 0.8 }, 
+              // UPDATED: strokeWidth 5 (Default)
+              style: { stroke: e.data?.originalColor, strokeWidth: 5, opacity: 0.8 }, 
               markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               labelStyle: { ...e.labelStyle, fill: e.data?.originalColor, opacity: 1 },
@@ -368,8 +368,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
               style: { 
                   ...e.style, 
                   stroke: color,
-                  // UPDATED: strokeWidth 8 for highlighted
-                  strokeWidth: isVisible ? 8 : 1,
+                  // UPDATED: No extra thickness for highlight (keep 5), just higher opacity/z-index
+                  strokeWidth: 5, 
                   opacity: isVisible ? 1 : 0.05, 
                   zIndex: isVisible ? 10 : 0
               },
