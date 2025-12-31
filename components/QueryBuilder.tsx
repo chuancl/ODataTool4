@@ -220,6 +220,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           skip={skip} setSkip={setSkip}
           count={count} setCount={setCount}
           currentSchema={currentSchema}
+          schema={schema}
       />
 
       <UrlBar 

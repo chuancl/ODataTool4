@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Input, Select, SelectItem, Checkbox, Selection, Button } from "@nextui-org/react";
-import { CheckSquare, ArrowDownAz, ArrowUpZa } from 'lucide-react';
-import { EntityType } from '@/utils/odata-helper';
+import { CheckSquare, ArrowDownAz, ArrowUpZa, CornerDownRight } from 'lucide-react';
+import { EntityType, ParsedSchema } from '@/utils/odata-helper';
 
 interface ParamsFormProps {
     entitySets: string[];
@@ -18,6 +18,7 @@ interface ParamsFormProps {
     count: boolean; setCount: (val: boolean) => void;
 
     currentSchema: EntityType | null;
+    schema: ParsedSchema | null; // 需要完整的 schema 来查找级联实体
 }
 
 export const ParamsForm: React.FC<ParamsFormProps> = ({
@@ -29,7 +30,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     top, setTop,
     skip, setSkip,
     count, setCount,
-    currentSchema
+    currentSchema,
+    schema
 }) => {
     const ALL_KEY = '_ALL_';
 
@@ -68,49 +70,71 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         }
     };
 
-    // --- Expand 字段逻辑 ---
+    // --- Expand 字段逻辑 (支持级联) ---
     const expandItems = useMemo(() => {
-        if (!currentSchema) return [];
+        if (!currentSchema || !schema) return [];
         if (currentSchema.navigationProperties.length === 0) {
-            return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined }];
+            return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined, level: 0 }];
         }
-        return [
-            { name: ALL_KEY, type: 'Special', label: '全选 (Expand All)', targetType: undefined },
-            ...currentSchema.navigationProperties.map(nav => ({
-                name: nav.name,
-                label: nav.name,
-                type: 'nav',
-                targetType: nav.targetType
-            }))
-        ];
-    }, [currentSchema]);
+
+        // 递归查找级联路径的辅助函数
+        // entityName: 当前实体名
+        // parentPath: 父路径 (e.g., "Supplier")
+        // currentDepth: 当前深度
+        const buildPaths = (entityName: string, parentPath: string, currentDepth: number): any[] => {
+            // 限制最大深度为 2 (Root -> Level 1 -> Level 2)，避免无限递归和 UI 过于复杂
+            if (currentDepth >= 2) return [];
+
+            const entity = schema.entities.find(e => e.name === entityName);
+            if (!entity) return [];
+
+            let results: any[] = [];
+            
+            for (const nav of entity.navigationProperties) {
+                const currentPath = parentPath ? `${parentPath}/${nav.name}` : nav.name;
+                
+                // 添加当前层级
+                results.push({
+                    name: currentPath,
+                    label: nav.name, // 显示名只显示当前段，渲染时会有缩进
+                    fullPath: currentPath,
+                    type: 'nav',
+                    targetType: nav.targetType,
+                    level: currentDepth
+                });
+
+                // 递归查找下一级
+                let targetTypeName = nav.targetType;
+                if (targetTypeName) {
+                    // 清理 EntityType 名称 (e.g., "Collection(Namespace.Type)" -> "Type")
+                    if (targetTypeName.startsWith('Collection(')) {
+                        targetTypeName = targetTypeName.slice(11, -1);
+                    }
+                    targetTypeName = targetTypeName.split('.').pop() || "";
+                    
+                    if (targetTypeName) {
+                        const children = buildPaths(targetTypeName, currentPath, currentDepth + 1);
+                        results = results.concat(children);
+                    }
+                }
+            }
+            return results;
+        };
+
+        // 从当前实体开始构建，初始深度 0
+        return buildPaths(currentSchema.name, "", 0);
+    }, [currentSchema, schema]);
 
     const currentExpandKeys = useMemo(() => {
-        const selected = new Set(expand ? expand.split(',') : []);
-        if (currentSchema && currentSchema.navigationProperties.length > 0 && selected.size === currentSchema.navigationProperties.length) {
-            selected.add(ALL_KEY);
-        }
-        return selected;
-    }, [expand, currentSchema]);
+        // Expand 只是简单的多选，不再有全选逻辑
+        return new Set(expand ? expand.split(',') : []);
+    }, [expand]);
 
     const handleExpandChange = (keys: Selection) => {
-        if (!currentSchema) return;
         const newSet = new Set(keys);
-        const allNavs = currentSchema.navigationProperties.map(n => n.name);
-
         if (newSet.has('none')) newSet.delete('none');
-
-        const wasAllSelected = currentExpandKeys.has(ALL_KEY);
-        const isAllSelected = newSet.has(ALL_KEY);
-
-        if (isAllSelected && !wasAllSelected) {
-            setExpand(allNavs.join(','));
-        } else if (!isAllSelected && wasAllSelected) {
-            setExpand('');
-        } else {
-            newSet.delete(ALL_KEY);
-            setExpand(Array.from(newSet).join(','));
-        }
+        // 直接设置选中的路径字符串集合
+        setExpand(Array.from(newSet).join(','));
     };
 
     // --- Sort 字段逻辑 ---
@@ -222,7 +246,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     )}
                 </div>
 
-                {/* 智能 Expand 展开选择 */}
+                {/* 智能 Expand 展开选择 (级联) */}
                 <div className="md:col-span-2">
                     {currentSchema ? (
                         <Select
@@ -237,23 +261,23 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             items={expandItems}
                         >
                             {(item) => {
-                                if (item.type === 'Special') {
-                                    return (
-                                        <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
-                                            <div className="flex items-center gap-2">
-                                                <CheckSquare size={14} /> {item.label}
-                                            </div>
-                                        </SelectItem>
-                                    );
-                                }
                                 if (item.type === 'placeholder') {
                                     return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
                                 }
+                                // 根据层级进行缩进渲染
+                                const indent = item.level > 0 ? `${item.level * 12}px` : '0px';
                                 return (
                                     <SelectItem key={item.name} value={item.name} textValue={item.name}>
-                                        <div className="flex flex-col">
-                                            <span className="text-small">{item.name}</span>
-                                            <span className="text-tiny text-default-400">To: {item.targetType?.split('.').pop()}</span>
+                                        <div className="flex flex-col" style={{ paddingLeft: indent }}>
+                                            <div className="flex items-center gap-1">
+                                                {item.level > 0 && <CornerDownRight size={12} className="text-default-400" />}
+                                                <span className="text-small">{item.label}</span>
+                                            </div>
+                                            {item.targetType && (
+                                                <span className="text-tiny text-default-400 ml-1">
+                                                    To: {item.targetType?.split('.').pop()}
+                                                </span>
+                                            )}
                                         </div>
                                     </SelectItem>
                                 );
