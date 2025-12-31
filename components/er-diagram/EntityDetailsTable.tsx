@@ -188,7 +188,7 @@ export const EntityDetailsTable = ({
                                     <div className="flex items-center gap-1 w-full">
                                         <GripVertical 
                                             size={12} 
-                                            // Stop propagation on drag handle to prevent wrapper MD event
+                                            // Stop propagation on drag handle to prevent wrapper MD event 
                                             onMouseDown={(e) => e.stopPropagation()}
                                             className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" 
                                         />

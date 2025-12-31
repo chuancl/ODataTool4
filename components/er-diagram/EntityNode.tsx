@@ -385,7 +385,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             keys={data.keys} 
                             getFkInfo={getForeignKeyInfo}
                             onJumpToEntity={(name) => {
-                                // Link inside Table -> Jump AND Open Popover (Close current, open target)
+                                // Link inside Table -> Jump AND Open Popover (Close current, open target) 
                                 handleJumpToEntity(name, true);
                             }}
                             onFocus={() => addActiveEntity(id)} // Pass focus callback for internal table interactives
