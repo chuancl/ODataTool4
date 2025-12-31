@@ -344,15 +344,15 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         <div 
             // Important: 'nodrag' prevents ReactFlow from dragging the node when interacting with the table.
             // 'nowheel' prevents the canvas from zooming when scrolling the table.
-            // onMouseDown: Stop propagation so we don't drag the node, AND triggers 'addActiveEntity' to bring node to front.
-            // onClick: Stop propagation so we DON'T trigger 'onNodeClick' (highlighting logic) in the parent graph.
+            // onMouseDown: STOP PROPAGATION to prevent dragging. Do NOT add active entity here (causes re-render race condition).
+            // onClick: Trigger addActiveEntity (Bring to Front) here. This is safe for links/sorting as they handle their own clicks first.
             className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in nodrag nowheel"
             onMouseDown={(e) => {
-                e.stopPropagation(); // Block drag/selection of the underlying node
-                addActiveEntity(id); // Bring this entity stack to the top (Z-Index)
+                e.stopPropagation(); 
             }}
             onClick={(e) => {
-                e.stopPropagation(); // Block 'highlight connected entities' logic
+                e.stopPropagation(); // Block 'highlight connected entities'
+                addActiveEntity(id); // Bring to front on CLICK
             }}
         >
             <div className="bg-content1 rounded-lg shadow-2xl border border-divider overflow-hidden flex flex-col max-h-[600px] ring-1 ring-black/5">

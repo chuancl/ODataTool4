@@ -122,8 +122,8 @@ export const EntityDetailsTable = ({
                         <div className="flex items-center gap-0.5 overflow-hidden">
                             <span 
                                 className="font-bold text-secondary cursor-pointer hover:underline hover:text-secondary-600 truncate" 
-                                // Prevent wrapper's onMouseDown (which triggers z-index update and potential re-render race)
-                                onMouseDown={(e) => e.stopPropagation()}
+                                // Clean onClick handling: Stop propagation to wrapper (so we don't 'bring to front' the current node redundantly) 
+                                // and trigger the jump. No onMouseDown needed.
                                 onClick={(e) => { e.stopPropagation(); onJumpToEntity(fk.targetEntity); }}
                                 title={`Jump to Entity: ${fk.targetEntity}`}
                             >
