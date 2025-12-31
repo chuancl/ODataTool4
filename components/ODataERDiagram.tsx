@@ -233,7 +233,7 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
 // --------------------------------------------------------
 // Component: EntityNode
 // --------------------------------------------------------
-const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
+const EntityNode = ({ id, data, selected }: NodeProps) => {
   const updateNodeInternals = useUpdateNodeInternals();
   const { fitView, getNodes } = useReactFlow();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -252,7 +252,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   }, [isExpanded, id, updateNodeInternals]);
 
   // 处理导航跳转
-  const handleJumpToEntity = useCallback((e: React.MouseEvent, targetEntityName: string) => {
+  const handleJumpToEntity = (e: React.MouseEvent, targetEntityName: string) => {
     e.stopPropagation();
     const targetId = targetEntityName;
     const nodes = getNodes();
@@ -267,7 +267,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
     } else {
       console.warn(`Target node ${targetId} not found.`);
     }
-  }, [getNodes, fitView]);
+  };
 
   // 查找某个属性是否是外键，并返回关联信息
   const getForeignKeyInfo = useCallback((propName: string) => {
@@ -506,7 +506,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
       </div>
     </div>
   );
-});
+};
 
 const nodeTypes = { entity: EntityNode };
 
@@ -538,33 +538,43 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   // Refs for stable state access during callbacks
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const lastDragTime = useRef(0);
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
 
-  // [PERFORMANCE FIX]
-  // 仅在拖拽结束时重新计算布局（Handle位置更新）
-  // 避免在 onNodeDrag 中高频调用 setNodes 导致重渲染和卡顿
-  const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
-    const currentNodes = nodesRef.current;
-    const currentEdges = edgesRef.current;
-    
-    // 获取拖拽节点的最新位置
-    const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
-    
-    const mergedNodes = currentNodes.map(n => {
-        const dragged = draggedMap.get(n.id);
-        if (dragged) {
-            return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
-        }
-        return n;
-    });
+  // 节点拖拽处理函数 (Throttled)
+  const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
+    const now = Date.now();
+    // 节流: 限制执行频率 (30ms 约等于 33FPS)，给渲染留出时间
+    if (now - lastDragTime.current < 30) {
+      return;
+    }
+    lastDragTime.current = now;
 
-    // 重新计算最佳 Handle 位置
-    const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
-    
-    setNodes(newNodes);
-    setEdges(newEdges); 
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+    rafRef.current = requestAnimationFrame(() => {
+        const currentNodes = nodesRef.current;
+        const currentEdges = edgesRef.current;
+        
+        // 1. 合并位置数据
+        const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
+        const mergedNodes = currentNodes.map(n => {
+            const dragged = draggedMap.get(n.id);
+            if (dragged) {
+                return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
+            }
+            return n;
+        });
+
+        // 2. 重新计算布局
+        const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
+        
+        setNodes(newNodes);
+        setEdges(newEdges); 
+    });
   }, [setNodes, setEdges]); 
 
   useEffect(() => {
@@ -837,7 +847,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeDragStop={onNodeDragStop} 
+        onNodeDrag={onNodeDrag} 
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
