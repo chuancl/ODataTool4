@@ -19,7 +19,7 @@ import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema, EntityProperty } from '@/utils/odata-helper';
 import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip, Switch } from "@nextui-org/react";
-import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive } from 'lucide-react';
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive, Type } from 'lucide-react';
 import { useReactTable, getCoreRowModel, getSortedRowModel, flexRender, createColumnHelper, SortingState } from '@tanstack/react-table';
 
 const elk = new ELK();
@@ -65,8 +65,10 @@ const EntityDetailsTable = ({
     const columnHelper = createColumnHelper<EntityProperty>();
 
     const columns = useMemo(() => [
+        // 1. Name Column
         columnHelper.accessor('name', {
             header: 'Field',
+            enableSorting: true,
             cell: info => {
                 const isKey = keys.includes(info.getValue());
                 return (
@@ -79,34 +81,90 @@ const EntityDetailsTable = ({
                 );
             }
         }),
+
+        // 2. Type Column
         columnHelper.accessor('type', {
             header: 'Type',
-            cell: info => <span className="font-mono text-xs text-primary/80">{info.getValue().split('.').pop()}</span>
+            enableSorting: true,
+            cell: info => <span className="font-mono text-[10px] text-primary/80">{info.getValue().split('.').pop()}</span>
         }),
-        columnHelper.accessor('maxLength', {
-            header: 'Len',
-            cell: info => info.getValue() ? <span className="text-tiny font-mono">{info.getValue()}</span> : <span className="text-default-300">-</span>
+
+        // 3. Size/Precision Column (Combines MaxLength, Precision, Scale)
+        columnHelper.accessor(row => row.maxLength || row.precision || 0, {
+            id: 'size',
+            header: 'Size',
+            enableSorting: true,
+            cell: info => {
+                const p = info.row.original;
+                if (p.maxLength) return <span className="font-mono text-[10px] text-default-500">{p.maxLength}</span>;
+                if (p.precision) return <span className="font-mono text-[10px] text-default-500">{p.precision}{p.scale !== undefined ? `,${p.scale}` : ''}</span>;
+                return <span className="text-default-300 text-[10px]">-</span>;
+            }
         }),
-        columnHelper.accessor('nullable', {
-            header: 'Null',
-            cell: info => info.getValue() ? 
-                <div className="flex justify-center"><Check size={14} className="text-success"/></div> : 
-                <div className="flex justify-center"><Minus size={14} className="text-default-300"/></div>
-        }),
-        columnHelper.display({
+
+        // 4. Attributes Column (Nullable, Fixed, Unicode, Concurrency)
+        columnHelper.accessor(row => `${row.nullable}${row.unicode}${row.fixedLength}${row.concurrencyMode}`, {
             id: 'attributes',
-            header: 'Attrs',
+            header: 'Attributes',
+            enableSorting: false, 
             cell: info => {
                 const p = info.row.original;
                 return (
-                    <div className="flex gap-1">
-                        {p.fixedLength && <span title="Fixed Length" className="px-1 bg-default-200 rounded text-[9px] font-mono">F</span>}
-                        {p.unicode === false && <span title="Non-Unicode" className="px-1 bg-warning/20 text-warning-700 rounded text-[9px] font-mono">A</span>}
-                        {(p.precision || p.scale) && <span title={`Prec:${p.precision}, Scale:${p.scale}`} className="px-1 bg-primary/10 text-primary rounded text-[9px] font-mono">#{p.precision},{p.scale}</span>}
+                    <div className="flex items-center gap-1 flex-wrap max-w-[120px]">
+                        {/* Nullable status */}
+                        {!p.nullable && (
+                            <span title="Required (Not Null)" className="cursor-help px-1 rounded-[3px] bg-danger/10 text-danger text-[9px] font-bold border border-danger/20">Req</span>
+                        )}
+                        
+                        {/* Fixed Length */}
+                        {p.fixedLength && (
+                             <span title="Fixed Length" className="cursor-help px-1 rounded-[3px] bg-default-100 text-default-600 text-[9px] font-medium border border-default-200">Fix</span>
+                        )}
+
+                        {/* Unicode Status */}
+                        {p.unicode === false ? (
+                             <span title="ANSI (Non-Unicode)" className="cursor-help px-1 rounded-[3px] bg-warning/10 text-warning-700 text-[9px] font-medium border border-warning/20">Ansi</span>
+                        ) : (
+                             // Optional: Show Unicode explicitly if you want, or assume default. 
+                             // Showing it makes it "complete" as requested.
+                             <span title="Unicode" className="cursor-help px-1 rounded-[3px] bg-primary/5 text-primary/70 text-[9px] font-medium border border-primary/10">Uni</span>
+                        )}
+
+                        {/* Concurrency */}
+                        {p.concurrencyMode === 'Fixed' && (
+                            <span title="Concurrency Mode: Fixed" className="cursor-help px-1 rounded-[3px] bg-success/10 text-success-700 text-[9px] font-medium border border-success/20">Lock</span>
+                        )}
                     </div>
                 );
             }
         }),
+
+        // 5. Default Value
+        columnHelper.accessor('defaultValue', {
+            header: 'Default',
+            enableSorting: true,
+            cell: info => info.getValue() ? <span className="font-mono text-[10px] bg-default-50 px-1 rounded border border-default-100 text-default-600 max-w-[60px] truncate block" title={info.getValue()}>{info.getValue()}</span> : <span className="text-default-200 text-[10px]">-</span>
+        }),
+
+        // 6. Relation Column (Restored!)
+        columnHelper.display({
+            id: 'relation',
+            header: 'Relation',
+            cell: info => {
+                const fk = getFkInfo(info.row.original.name);
+                if (!fk) return null;
+                return (
+                    <div className="flex flex-col text-[9px] leading-tight group cursor-pointer hover:bg-secondary/5 rounded p-0.5 -m-0.5 transition-colors" title={`Foreign Key to ${fk.targetEntity} via ${fk.navName}`}>
+                        <div className="flex items-center gap-1 text-secondary font-semibold">
+                            <Link2 size={8} />
+                            <span className="truncate max-w-[80px]">{fk.targetEntity}</span>
+                        </div>
+                        <span className="opacity-60 pl-3 font-mono truncate max-w-[80px]">.{fk.targetProperty}</span>
+                    </div>
+                );
+            }
+        })
+
     ], [keys, getFkInfo]);
 
     const table = useReactTable({
@@ -121,21 +179,22 @@ const EntityDetailsTable = ({
     return (
         <div className="w-full">
             <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 z-20 bg-default-100 shadow-sm border-b border-divider">
+                <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
                     {table.getHeaderGroups().map(headerGroup => (
                         <tr key={headerGroup.id}>
                             {headerGroup.headers.map(header => (
                                 <th 
                                     key={header.id} 
-                                    className="p-2 text-[10px] font-bold text-default-500 uppercase tracking-wider cursor-pointer hover:bg-default-200 transition-colors select-none group"
+                                    className="p-2 py-2.5 text-[10px] font-bold text-default-500 uppercase tracking-wider cursor-pointer hover:bg-default-100 transition-colors select-none group border-r border-divider/20 last:border-r-0"
                                     onClick={header.column.getToggleSortingHandler()}
+                                    style={{ width: header.column.getSize() }}
                                 >
                                     <div className="flex items-center gap-1">
                                         {flexRender(header.column.columnDef.header, header.getContext())}
                                         {{
-                                            asc: <ChevronUp size={10} />,
-                                            desc: <ChevronDown size={10} />,
-                                        }[header.column.getIsSorted() as string] ?? <ArrowUpDown size={10} className="opacity-0 group-hover:opacity-50" />}
+                                            asc: <ChevronUp size={10} className="text-primary" />,
+                                            desc: <ChevronDown size={10} className="text-primary" />,
+                                        }[header.column.getIsSorted() as string] ?? <ArrowUpDown size={10} className="opacity-0 group-hover:opacity-40 transition-opacity" />}
                                     </div>
                                 </th>
                             ))}
@@ -147,13 +206,13 @@ const EntityDetailsTable = ({
                         <tr 
                             key={row.id} 
                             className={`
-                                border-b border-divider/50 last:border-0 transition-colors
+                                border-b border-divider/40 last:border-0 transition-colors
                                 hover:bg-primary/5
-                                ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/50'}
+                                ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/30'}
                             `}
                         >
                             {row.getVisibleCells().map(cell => (
-                                <td key={cell.id} className="p-2 text-[11px] h-8">
+                                <td key={cell.id} className="p-2 text-[11px] h-9 border-r border-divider/20 last:border-r-0 align-middle">
                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                 </td>
                             ))}
@@ -161,7 +220,7 @@ const EntityDetailsTable = ({
                     ))}
                 </tbody>
             </table>
-            {properties.length === 0 && <div className="p-4 text-center text-xs text-default-400">No properties found.</div>}
+            {properties.length === 0 && <div className="p-8 text-center text-xs text-default-400">No properties found for this entity.</div>}
         </div>
     );
 };
@@ -359,7 +418,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
             shouldCloseOnBlur={false}
          >
             <PopoverTrigger>
-                {/* 仅点击文字触发 Popover，同时阻止冒泡防止选中节点（或者允许选中？通常文字点击不应选中节点如果它触发了Pop） */}
+                {/* 仅点击文字触发 Popover，同时阻止冒泡防止选中节点 */}
                 <span 
                     className="cursor-pointer hover:underline underline-offset-2 decoration-primary/50"
                     onClick={(e) => { e.stopPropagation(); setShowEntityDetails(true); }}
@@ -367,7 +426,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                     {data.label}
                 </span>
             </PopoverTrigger>
-            <PopoverContent className="w-[500px] p-0">
+            <PopoverContent className="w-[600px] p-0">
                 <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden flex flex-col max-h-[600px]">
                     <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
                         <div className="flex items-center gap-2 font-bold text-default-700">
@@ -380,7 +439,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                         </Button>
                     </div>
                     
-                    <ScrollShadow className="flex-1 overflow-auto">
+                    <ScrollShadow className="flex-1 overflow-auto bg-content1">
                          <EntityDetailsTable 
                             properties={data.properties} 
                             keys={data.keys} 
@@ -422,7 +481,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                  {isKey && <Key size={8} className="shrink-0 text-warning" />}
                  {fkInfo && <Link2 size={8} className="shrink-0 text-secondary" />}
                  
-                 {/* 仅点击属性名触发 Popover */}
+                 {/* 仅点击属性名触发 Popover - Single Property Details */}
                  <Popover placement="right" showArrow offset={10}>
                     <PopoverTrigger>
                         <span 
@@ -433,77 +492,83 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             {prop.name}
                         </span>
                     </PopoverTrigger>
-                    <PopoverContent className="p-3 w-[260px]">
-                        <div className="text-xs flex flex-col gap-2">
+                    <PopoverContent className="p-3 w-[280px]">
+                        <div className="text-xs flex flex-col gap-3">
+                            {/* Header */}
                             <div className="font-bold flex items-center justify-between border-b border-divider pb-2">
-                                <span className="flex items-center gap-2">
+                                <span className="flex items-center gap-2 text-sm">
                                     {prop.name}
                                     {isKey && <Chip size="sm" color="warning" variant="flat" className="h-4 text-[9px] px-1">PK</Chip>}
                                     {fkInfo && <Chip size="sm" color="secondary" variant="flat" className="h-4 text-[9px] px-1">FK</Chip>}
                                 </span>
                             </div>
                             
-                            <div className="space-y-2">
-                                {/* Basic Info */}
-                                <div className="grid grid-cols-[70px_1fr] gap-1 items-center">
-                                    <span className="text-default-400">Type</span>
-                                    <span className="font-mono bg-default-100 px-1 rounded">{prop.type}</span>
-                                    
-                                    <span className="text-default-400">Nullable</span>
-                                    <span className={prop.nullable ? "text-success" : "text-danger"}>{prop.nullable ? 'True' : 'False'}</span>
-                                    
-                                    {prop.defaultValue && (
-                                        <>
-                                            <span className="text-default-400">Default</span>
-                                            <span className="font-mono text-default-600">{prop.defaultValue}</span>
-                                        </>
-                                    )}
+                            {/* Grid Info */}
+                            <div className="grid grid-cols-[60px_1fr] gap-x-2 gap-y-2 text-default-600">
+                                <span className="text-default-400">Type</span>
+                                <span className="font-mono bg-default-100 px-1 rounded w-fit">{prop.type}</span>
+                                
+                                <span className="text-default-400">Required</span>
+                                <span className={!prop.nullable ? "text-danger font-medium" : "text-default-500"}>
+                                    {!prop.nullable ? 'Yes (Not Null)' : 'No (Nullable)'}
+                                </span>
+                                
+                                {prop.defaultValue && (
+                                    <>
+                                        <span className="text-default-400">Default</span>
+                                        <span className="font-mono bg-default-50 px-1 rounded border border-default-200">{prop.defaultValue}</span>
+                                    </>
+                                )}
+                            </div>
+
+                            <Divider className="opacity-50"/>
+                            
+                            {/* Constraints & Facets - Display ALL available info */}
+                            <div className="flex flex-wrap gap-2">
+                                {/* Size/Precision */}
+                                {prop.maxLength !== undefined && (
+                                    <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[50px] border border-divider">
+                                        <span className="text-[9px] text-default-400 flex items-center gap-1"><AlignJustify size={10}/> MaxLen</span>
+                                        <span className="font-mono font-bold">{prop.maxLength}</span>
+                                    </div>
+                                )}
+                                {(prop.precision !== undefined || prop.scale !== undefined) && (
+                                    <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[50px] border border-divider">
+                                        <span className="text-[9px] text-default-400 flex items-center gap-1"><Hash size={10}/> Scale</span>
+                                        <span className="font-mono font-bold">{prop.precision || '-'}/{prop.scale || '-'}</span>
+                                    </div>
+                                )}
+
+                                {/* Boolean Flags */}
+                                {prop.fixedLength && (
+                                    <div className="flex flex-col bg-default-100 p-1.5 rounded min-w-[50px] border border-divider">
+                                        <span className="text-[9px] text-default-400 flex items-center gap-1"><AlignJustify size={10}/> Fixed</span>
+                                        <span className="font-bold text-default-700 text-[10px]">Yes</span>
+                                    </div>
+                                )}
+                                
+                                <div className="flex flex-col bg-default-100 p-1.5 rounded min-w-[50px] border border-divider">
+                                    <span className="text-[9px] text-default-400 flex items-center gap-1"><CaseSensitive size={10}/> Unicode</span>
+                                    <span className={`font-bold text-[10px] ${prop.unicode === false ? 'text-warning-700' : 'text-primary'}`}>
+                                        {prop.unicode === false ? 'False (ANSI)' : 'True'}
+                                    </span>
                                 </div>
 
-                                <Divider className="my-1 opacity-50"/>
-                                
-                                {/* Constraints & Formatting */}
-                                <div className="flex flex-wrap gap-2">
-                                    {prop.maxLength !== undefined && (
-                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
-                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><AlignJustify size={10}/> Max Len</span>
-                                            <span className="font-mono font-bold">{prop.maxLength}</span>
-                                        </div>
-                                    )}
-                                    {prop.fixedLength && (
-                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
-                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><AlignJustify size={10}/> Fixed</span>
-                                            <span className="font-mono font-bold text-success">Yes</span>
-                                        </div>
-                                    )}
-                                    {(prop.precision !== undefined || prop.scale !== undefined) && (
-                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
-                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><Hash size={10}/> Prec/Scale</span>
-                                            <span className="font-mono font-bold">{prop.precision || '-'}/{prop.scale || '-'}</span>
-                                        </div>
-                                    )}
-                                    {prop.unicode === false && (
-                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
-                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><CaseSensitive size={10}/> Unicode</span>
-                                            <span className="font-mono font-bold text-warning">False</span>
-                                        </div>
-                                    )}
-                                    {prop.concurrencyMode && (
-                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
-                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><Zap size={10}/> Mode</span>
-                                            <span className="font-mono font-bold">{prop.concurrencyMode}</span>
-                                        </div>
-                                    )}
-                                </div>
+                                {prop.concurrencyMode && (
+                                    <div className="flex flex-col bg-warning/10 p-1.5 rounded min-w-[50px] border border-warning/20">
+                                        <span className="text-[9px] text-warning-600 flex items-center gap-1"><Zap size={10}/> Mode</span>
+                                        <span className="font-bold text-warning-800 text-[10px]">{prop.concurrencyMode}</span>
+                                    </div>
+                                )}
                             </div>
                             
                             {/* FK Relation Section */}
                             {fkInfo && (
-                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-2">
+                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1">
                                     <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
                                         <Link2 size={10} /> Foreign Key Relation
                                     </div>
-                                    <div className="grid grid-cols-[50px_1fr] gap-1 text-[10px]">
+                                    <div className="grid grid-cols-[40px_1fr] gap-1 text-[10px]">
                                         <span className="opacity-70">To:</span> <span className="font-bold">{fkInfo.targetEntity}</span>
                                         <span className="opacity-70">Field:</span> <span className="font-mono">{fkInfo.targetProperty}</span>
                                         <span className="opacity-70">Via:</span> <span className="italic opacity-80">{fkInfo.navName}</span>
