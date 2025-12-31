@@ -78,8 +78,14 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
 
   // 2. 监听参数变化：自动生成 OData URL
   useEffect(() => {
-    if (!selectedEntity) return;
     const baseUrl = url.endsWith('/') ? url : `${url}/`;
+    
+    // 如果尚未选择实体，则仅显示基础 URL，确保 Input 不为空
+    if (!selectedEntity) {
+        setGeneratedUrl(baseUrl);
+        return;
+    }
+
     const params = new URLSearchParams();
     if (filter) params.append('$filter', filter);
     if (select) params.append('$select', select);
@@ -91,7 +97,10 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
       else params.append('$inlinecount', 'allpages');
     }
     
-    setGeneratedUrl(`${baseUrl}${selectedEntity}?${params.toString()}`);
+    // 使用 decodeURIComponent 保持 URL 可读性（不转义空格等字符）
+    const queryString = params.toString();
+    const displayQuery = queryString ? `?${decodeURIComponent(queryString)}` : '';
+    setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
   }, [url, selectedEntity, filter, select, expand, top, skip, count, version]);
 
   // 3. 执行查询：同时获取 JSON 和 XML
@@ -103,6 +112,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
 
     try {
       // 并行发起请求：一个要 JSON 用于表格和 JSON 预览，一个要 XML 用于 XML 预览
+      // 注意：fetch 会自动处理 URL 中的特殊字符，或者我们可以手动 encodeURI(generatedUrl) 如果遇到问题
+      // 这里直接使用 generatedUrl，允许用户手动修改的任何内容被发送
       const [jsonRes, xmlRes] = await Promise.allSettled([
         fetch(generatedUrl, { headers: { 'Accept': 'application/json' } }),
         fetch(generatedUrl, { headers: { 'Accept': 'application/xml, application/atom+xml' } })
@@ -242,8 +253,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
       <div className="flex gap-2 items-center bg-content2 p-2 rounded-lg border border-divider shrink-0">
         <Chip size="sm" color="primary" variant="flat" className="shrink-0">GET</Chip>
         <Input 
-          value={generatedUrl} 
-          readOnly 
+          value={generatedUrl}
+          onValueChange={setGeneratedUrl} // 允许用户手动修改
           size="sm" 
           variant="flat" 
           className="font-mono text-sm"
