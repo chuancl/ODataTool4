@@ -109,8 +109,20 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const visibleProperties = isExpanded ? data.properties : data.properties.slice(0, 12);
   const hiddenCount = data.properties.length - 12;
 
-  // Static Handle Styles (Hidden by default, visible when interacting usually, but here we keep them transparent but clickable)
-  const staticHandleStyle = { width: '12px', height: '12px', background: 'transparent', zIndex: 10, border: 'none' };
+  // VISIBLE Static Handle Styles
+  // Made visible so users know where they can connect/drag edges
+  const staticHandleStyle: React.CSSProperties = { 
+      width: '10px', 
+      height: '10px', 
+      background: '#9CA3AF', // Gray-400 equivalent, visible but neutral
+      border: '2px solid white', 
+      borderRadius: '50%',
+      zIndex: 50,
+      transition: 'background 0.2s, transform 0.2s'
+  };
+  
+  // Dynamic handle style (still invisible usually as they are auto-managed, but kept for logic)
+  // We keep them transparent so they don't clutter, relying on static handles for manual overrides.
 
   return (
     // Root Wrapper: Manages Z-Index. 
@@ -119,17 +131,43 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         style={{ zIndex: showEntityDetails ? 2000 : undefined }}
     >
       {/* --- Static Handles for Manual Connections (Top/Right/Bottom/Left) --- */}
-      {/* These handles allow users to manually drag edges to specific sides of the node */}
-      <Handle id="static-top" type="source" position={Position.Top} style={{ ...staticHandleStyle, top: '-6px' }} />
-      <Handle id="static-right" type="source" position={Position.Right} style={{ ...staticHandleStyle, right: '-6px' }} />
-      <Handle id="static-bottom" type="source" position={Position.Bottom} style={{ ...staticHandleStyle, bottom: '-6px' }} />
-      <Handle id="static-left" type="source" position={Position.Left} style={{ ...staticHandleStyle, left: '-6px' }} />
+      {/* VISIBLE PORTS: Users can drag edge ends here to manually route lines */}
+      {/* We apply a hover effect via CSS class or inline style logic if needed, but simple visible dots are better for UX here. */}
       
-      {/* Also add Target handles for the same positions to allow incoming connections */}
-      <Handle id="static-top-t" type="target" position={Position.Top} style={{ ...staticHandleStyle, top: '-6px' }} />
-      <Handle id="static-right-t" type="target" position={Position.Right} style={{ ...staticHandleStyle, right: '-6px' }} />
-      <Handle id="static-bottom-t" type="target" position={Position.Bottom} style={{ ...staticHandleStyle, bottom: '-6px' }} />
-      <Handle id="static-left-t" type="target" position={Position.Left} style={{ ...staticHandleStyle, left: '-6px' }} />
+      <Handle 
+        id="static-top" 
+        type="source" 
+        position={Position.Top} 
+        style={{ ...staticHandleStyle, top: '-5px' }} 
+        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+      />
+      <Handle 
+        id="static-right" 
+        type="source" 
+        position={Position.Right} 
+        style={{ ...staticHandleStyle, right: '-5px' }} 
+        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+      />
+      <Handle 
+        id="static-bottom" 
+        type="source" 
+        position={Position.Bottom} 
+        style={{ ...staticHandleStyle, bottom: '-5px' }} 
+        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+      />
+      <Handle 
+        id="static-left" 
+        type="source" 
+        position={Position.Left} 
+        style={{ ...staticHandleStyle, left: '-5px' }} 
+        className="opacity-40 group-hover:opacity-100 hover:!bg-primary hover:scale-125"
+      />
+      
+      {/* Target Handles - overlapping source handles visually to create a unified 'port' feel */}
+      <Handle id="static-top-t" type="target" position={Position.Top} style={{ ...staticHandleStyle, top: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
+      <Handle id="static-right-t" type="target" position={Position.Right} style={{ ...staticHandleStyle, right: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
+      <Handle id="static-bottom-t" type="target" position={Position.Bottom} style={{ ...staticHandleStyle, bottom: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
+      <Handle id="static-left-t" type="target" position={Position.Left} style={{ ...staticHandleStyle, left: '-5px', visibility: 'hidden', pointerEvents: 'none' }} />
 
       {/* --- Dynamic Handles (Auto-Calculated) --- */}
       {dynamicHandles.map((handle) => {

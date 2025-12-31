@@ -271,8 +271,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
             markerStart: { type: MarkerType.ArrowClosed, color: e.color },
             markerEnd: { type: MarkerType.ArrowClosed, color: e.color },
             animated: false,
-            // UPDATED: strokeWidth 3 (Default), interactionWidth 20, updatable true
-            style: { stroke: e.color, strokeWidth: 3, opacity: 0.8 },
+            // UPDATED: strokeWidth 4 (Default), interactionWidth 20, updatable true
+            style: { stroke: e.color, strokeWidth: 4, opacity: 0.8 },
             interactionWidth: 20,
             updatable: true, // Allow manual adjustments
             label: e.label,
@@ -334,8 +334,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           setEdges((eds) => eds.map(e => ({
               ...e, 
               animated: false, 
-              // UPDATED: strokeWidth 3
-              style: { stroke: e.data?.originalColor, strokeWidth: 3, opacity: 0.8 }, 
+              // UPDATED: strokeWidth 4
+              style: { stroke: e.data?.originalColor, strokeWidth: 4, opacity: 0.8 }, 
               markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               labelStyle: { ...e.labelStyle, fill: e.data?.originalColor, opacity: 1 },
@@ -368,8 +368,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
               style: { 
                   ...e.style, 
                   stroke: color,
-                  // UPDATED: strokeWidth 6 for highlighted
-                  strokeWidth: isVisible ? 6 : 1,
+                  // UPDATED: strokeWidth 8 for highlighted
+                  strokeWidth: isVisible ? 8 : 1,
                   opacity: isVisible ? 1 : 0.05, 
                   zIndex: isVisible ? 10 : 0
               },
