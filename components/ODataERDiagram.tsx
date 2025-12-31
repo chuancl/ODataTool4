@@ -11,13 +11,14 @@ import ReactFlow, {
   Edge,
   Node,
   useStore,
-  useUpdateNodeInternals
+  useUpdateNodeInternals,
+  useReactFlow
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema } from '@/utils/odata-helper';
 import { Button, Spinner } from "@nextui-org/react";
-import { Key, Link2 } from 'lucide-react';
+import { Key, Link2, ArrowRightCircle } from 'lucide-react';
 
 const elk = new ELK();
 
@@ -189,6 +190,7 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
 const EntityNode = ({ id, data, selected }: NodeProps) => {
   // 必须引入此 Hook 通知 React Flow 更新内部句柄位置
   const updateNodeInternals = useUpdateNodeInternals();
+  const { fitView, getNodes } = useReactFlow();
   
   // 从 data 中获取动态计算好的 handles
   const dynamicHandles: DynamicHandleConfig[] = data.dynamicHandles || [];
@@ -197,6 +199,24 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, updateNodeInternals, JSON.stringify(dynamicHandles)]);
+
+  // 处理跳转到目标实体
+  const handleJumpToEntity = useCallback((e: React.MouseEvent, targetEntityName: string) => {
+    e.stopPropagation();
+    const nodes = getNodes();
+    // 假设 ID 就是实体名称
+    const targetNode = nodes.find(n => n.id === targetEntityName);
+
+    if (targetNode) {
+      fitView({
+        nodes: [{ id: targetEntityName }],
+        padding: 0.5,
+        duration: 800,
+      });
+    } else {
+      console.warn(`Target node ${targetEntityName} not found.`);
+    }
+  }, [getNodes, fitView]);
 
   return (
     <div className={`border-2 rounded-lg min-w-[200px] bg-content1 transition-all ${selected ? 'border-primary shadow-xl ring-2 ring-primary/20' : 'border-divider shadow-sm'}`}>
@@ -268,28 +288,38 @@ const EntityNode = ({ id, data, selected }: NodeProps) => {
             </div>
         )}
 
-        {/* 导航属性 */}
+        {/* 导航属性 (带专用颜色区块和跳转功能) */}
         {data.navigationProperties && data.navigationProperties.length > 0 && (
-            <>
-                <div className="h-px bg-divider my-1 mx-1 opacity-50" />
-                {data.navigationProperties.slice(0, 8).map((nav: any) => {
-                    const cleanType = nav.targetType?.replace('Collection(', '').replace(')', '').split('.').pop();
-                    return (
-                        <div key={nav.name} className="text-[10px] flex items-center justify-between p-1 rounded-sm text-default-500 hover:text-primary transition-colors">
-                            <span className="flex items-center gap-1 truncate max-w-[130px]" title={`Navigation: ${nav.name}`}>
-                                <Link2 size={8} className="shrink-0 opacity-70" />
-                                <span className="italic font-medium">{nav.name}</span>
-                            </span>
-                            <span className="text-[9px] opacity-50 truncate max-w-[60px]">{cleanType}</span>
+            <div className="mt-2 pt-2 border-t border-divider/50">
+                <div className="text-[9px] font-bold text-default-400 mb-1.5 px-1 uppercase tracking-wider flex items-center gap-2">
+                    <span>Navigation</span>
+                    <div className="h-px bg-divider flex-1"></div>
+                </div>
+                <div className="bg-secondary/10 rounded-md p-1 border border-secondary/10 flex flex-col gap-1">
+                    {data.navigationProperties.slice(0, 8).map((nav: any) => {
+                        const cleanType = nav.targetType?.replace('Collection(', '').replace(')', '').split('.').pop();
+                        return (
+                            <div 
+                                key={nav.name} 
+                                className="group flex items-center justify-between p-1.5 rounded-sm bg-content1/50 hover:bg-content1 hover:shadow-sm border border-transparent hover:border-secondary/20 transition-all cursor-pointer text-secondary-700"
+                                onClick={(e) => handleJumpToEntity(e, cleanType)}
+                                title={`Jump to ${cleanType}`}
+                            >
+                                <span className="flex items-center gap-1.5 truncate max-w-[130px]">
+                                    <ArrowRightCircle size={10} className="shrink-0 text-secondary opacity-70 group-hover:opacity-100 transition-opacity" />
+                                    <span className="font-medium text-[10px]">{nav.name}</span>
+                                </span>
+                                <span className="text-[9px] opacity-60 truncate max-w-[60px] font-mono group-hover:opacity-100">{cleanType}</span>
+                            </div>
+                        );
+                    })}
+                    {data.navigationProperties.length > 8 && (
+                        <div className="text-[9px] text-secondary-400 text-center pt-1 italic">
+                            + {data.navigationProperties.length - 8} more relations
                         </div>
-                    );
-                })}
-                 {data.navigationProperties.length > 8 && (
-                    <div className="text-[9px] text-default-300 text-center pt-1 italic">
-                        + {data.navigationProperties.length - 8} nav props
-                    </div>
-                )}
-            </>
+                    )}
+                </div>
+            </div>
         )}
       </div>
     </div>
@@ -450,8 +480,8 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         const getNodeDimensions = (propCount: number, navCount: number) => {
             const visibleProps = Math.min(propCount, 12);
             const visibleNavs = Math.min(navCount, 8);
-            const extraHeight = (navCount > 0 ? 10 : 0) + (propCount > 12 ? 20 : 0) + (navCount > 8 ? 20 : 0);
-            const height = 45 + (visibleProps * 24) + (visibleNavs * 24) + extraHeight + 50; 
+            const extraHeight = (navCount > 0 ? 30 : 0) + (propCount > 12 ? 20 : 0) + (navCount > 8 ? 20 : 0);
+            const height = 45 + (visibleProps * 24) + (visibleNavs * 28) + extraHeight + 50; 
             return { width: 350, height: height };
         };
 
