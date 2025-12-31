@@ -308,6 +308,9 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
 
+  // 用于管理高亮节点 ID 的集合
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
+
   // Refs for stable state access during callbacks
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -519,55 +522,100 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
     loadData();
   }, [url]);
 
-  const onNodeClick = useCallback((event: any, node: any) => {
-    const connectedEdgeIds = edges.filter(e => e.source === node.id || e.target === node.id);
-    const connectedNodeIds = new Set(connectedEdgeIds.flatMap(e => [e.source, e.target]));
-    
-    setNodes((nds) => nds.map((n) => {
-      const isRelated = connectedNodeIds.has(n.id) || n.id === node.id;
-      return {
-        ...n,
-        style: { 
-          opacity: isRelated ? 1 : 0.1, 
-          filter: isRelated ? 'none' : 'grayscale(100%)',
-          transition: 'all 0.3s ease'
-        }
-      };
-    }));
+  // 处理节点点击事件：多选/反选逻辑
+  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+    // 阻止事件冒泡，防止触发背景点击
+    event.stopPropagation();
 
-    setEdges((eds) => eds.map(e => {
-        const isDirectlyConnected = e.source === node.id || e.target === node.id;
-        const color = isDirectlyConnected ? (e.data?.originalColor || '#0070f3') : '#999';
-        
-        return {
-            ...e,
-            animated: isDirectlyConnected,
+    const isCtrlPressed = event.ctrlKey || event.metaKey;
+    const currentEdges = edgesRef.current; // 使用 ref 确保获取最新边数据
+
+    setHighlightedIds((prev) => {
+        // 如果是按住 Ctrl，则在原有基础上修改（复制一份 Set）
+        // 如果没有按住 Ctrl，则创建一个新的 Set（重置选择）
+        const next = new Set(isCtrlPressed ? prev : []);
+
+        if (isCtrlPressed && prev.has(node.id)) {
+            // Case: Ctrl + 点击已高亮的节点 -> 仅移除该节点（变暗），不影响其他节点
+            next.delete(node.id);
+        } else {
+            // Case: 普通点击 OR Ctrl + 点击未高亮的节点 -> 添加该节点及其邻居
+            next.add(node.id);
+            // 查找所有与该节点直接相连的节点
+            currentEdges.forEach(edge => {
+                if (edge.source === node.id) next.add(edge.target);
+                if (edge.target === node.id) next.add(edge.source);
+            });
+        }
+        return next;
+    });
+  }, []);
+
+  // 监听 background 点击，重置视图
+  const onPaneClick = useCallback(() => {
+      setHighlightedIds(new Set());
+  }, []);
+
+  // 监听 highlightedIds 变化，批量更新节点和边的样式
+  useEffect(() => {
+      // 1. 如果没有高亮节点，则全部恢复默认显示
+      if (highlightedIds.size === 0) {
+          setNodes((nds) => nds.map(n => ({
+              ...n,
+              style: { ...n.style, opacity: 1, filter: 'none' }
+          })));
+          setEdges((eds) => eds.map(e => ({
+              ...e, 
+              animated: false, 
+              style: { stroke: e.data?.originalColor, strokeWidth: 1.5, opacity: 0.8 }, 
+              markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
+              markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
+              labelStyle: { ...e.labelStyle, fill: e.data?.originalColor, opacity: 1 },
+              labelBgStyle: { ...e.labelBgStyle, fillOpacity: 0.7 },
+              zIndex: 0
+          })));
+          return;
+      }
+
+      // 2. 有高亮节点时，应用样式
+      setNodes((nds) => nds.map((n) => {
+          const isHighlighted = highlightedIds.has(n.id);
+          return {
+            ...n,
             style: { 
-                ...e.style, 
-                stroke: color,
-                strokeWidth: isDirectlyConnected ? 2.5 : 1,
-                opacity: isDirectlyConnected ? 1 : 0.1, 
-                zIndex: isDirectlyConnected ? 10 : 0
-            },
-            markerStart: { type: MarkerType.ArrowClosed, color: color },
-            markerEnd: { type: MarkerType.ArrowClosed, color: color },
-            labelStyle: { ...e.labelStyle, fill: color, opacity: isDirectlyConnected ? 1 : 0 },
-            labelBgStyle: { ...e.labelBgStyle, fillOpacity: isDirectlyConnected ? 0.9 : 0 }
-        };
-    }));
-  }, [edges, setNodes, setEdges]);
+              ...n.style,
+              opacity: isHighlighted ? 1 : 0.1, 
+              filter: isHighlighted ? 'none' : 'grayscale(100%)',
+              transition: 'all 0.3s ease'
+            }
+          };
+      }));
+
+      setEdges((eds) => eds.map(e => {
+          // 只有当源节点和目标节点都在高亮集合中时，边才高亮
+          const isVisible = highlightedIds.has(e.source) && highlightedIds.has(e.target);
+          const color = isVisible ? (e.data?.originalColor || '#0070f3') : '#999';
+          
+          return {
+              ...e,
+              animated: isVisible,
+              style: { 
+                  ...e.style, 
+                  stroke: color,
+                  strokeWidth: isVisible ? 2.5 : 1,
+                  opacity: isVisible ? 1 : 0.05, // 稍微降低未选中边的透明度以突出主体
+                  zIndex: isVisible ? 10 : 0
+              },
+              markerStart: { type: MarkerType.ArrowClosed, color: color },
+              markerEnd: { type: MarkerType.ArrowClosed, color: color },
+              labelStyle: { ...e.labelStyle, fill: color, opacity: isVisible ? 1 : 0 },
+              labelBgStyle: { ...e.labelBgStyle, fillOpacity: isVisible ? 0.9 : 0 }
+          };
+      }));
+  }, [highlightedIds, setNodes, setEdges]);
 
   const resetView = () => {
-     setNodes((nds) => nds.map(n => ({...n, style: { opacity: 1, filter: 'none' }})));
-     setEdges((eds) => eds.map(e => ({
-         ...e, 
-         animated: false, 
-         style: { stroke: e.data?.originalColor, strokeWidth: 1.5, opacity: 0.8 }, 
-         markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
-         markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
-         labelStyle: { ...e.labelStyle, fill: e.data?.originalColor, opacity: 1 },
-         labelBgStyle: { ...e.labelBgStyle, fillOpacity: 0.7 }
-     })));
+     setHighlightedIds(new Set());
   };
 
   return (
@@ -598,6 +646,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         onNodeDrag={onNodeDrag} 
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
         fitView
         attributionPosition="bottom-right"
         minZoom={0.1}
