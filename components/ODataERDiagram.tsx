@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import ReactFlow, { 
   Controls, 
   Background, 
@@ -296,18 +296,35 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
 
+  // 使用 Ref 保持对最新 nodes 的引用，避免在 onNodeDrag 中产生闭包陷阱或过度依赖
+  const nodesRef = useRef(nodes);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
   // 节点拖拽处理函数
-  const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, updatedNodes: Node[]) => {
-    // updatedNodes 包含最新的所有节点位置（包括正在拖拽的那个）
-    // 我们基于这些新位置重新计算所有连线和端口
+  const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
+    // 1. 获取完整的节点列表，并合并正在拖拽的节点位置
+    // React Flow 的 onNodeDrag 第三个参数只包含当前被选中的/被拖拽的节点
+    // 我们必须手动合并，否则会导致未拖拽的节点丢失
+    const currentNodes = nodesRef.current;
     
-    // 注意：这里需要传入当前的 edges，因为边的连接关系不变
-    // 我们这里使用函数式更新前的 edges 可能会有闭包问题，所以依赖项要加上 edges
-    // 但为了性能，ReactFlow 的 onNodeDrag 触发频率很高，calculateDynamicLayout 必须足够快
+    // 创建一个 Map 加速查找
+    const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
+
+    const mergedNodes = currentNodes.map(n => {
+        const dragged = draggedMap.get(n.id);
+        if (dragged) {
+            // 使用拖拽中的最新位置
+            return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
+        }
+        return n;
+    });
+
+    // 2. 基于新的位置重新计算布局（连线和 Port）
+    const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, edges);
     
-    const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(updatedNodes, edges);
-    
-    // 更新状态
+    // 3. 更新状态
     setNodes(newNodes);
     setEdges(newEdges);
   }, [edges, setNodes, setEdges]);
