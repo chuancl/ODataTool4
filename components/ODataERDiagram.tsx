@@ -10,7 +10,8 @@ import ReactFlow, {
   NodeProps,
   Edge,
   Node,
-  useStore
+  useStore,
+  useUpdateNodeInternals
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
@@ -185,9 +186,17 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
 
 
 // 实体节点组件
-const EntityNode = ({ data, selected }: NodeProps) => {
+const EntityNode = ({ id, data, selected }: NodeProps) => {
+  // 必须引入此 Hook 通知 React Flow 更新内部句柄位置
+  const updateNodeInternals = useUpdateNodeInternals();
+  
   // 从 data 中获取动态计算好的 handles
   const dynamicHandles: DynamicHandleConfig[] = data.dynamicHandles || [];
+
+  // 当 dynamicHandles 变化时，触发重绘
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, updateNodeInternals, JSON.stringify(dynamicHandles)]);
 
   return (
     <div className={`border-2 rounded-lg min-w-[200px] bg-content1 transition-all ${selected ? 'border-primary shadow-xl ring-2 ring-primary/20' : 'border-divider shadow-sm'}`}>
