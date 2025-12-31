@@ -6,7 +6,7 @@ import {
 } from "@nextui-org/react";
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 import { generateSAPUI5Code, ODataVersion } from '@/utils/odata-helper';
-import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces } from 'lucide-react';
+import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download } from 'lucide-react';
 
 // Code Mirror & Formatting Imports
 import CodeMirror from '@uiw/react-codemirror';
@@ -178,6 +178,20 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
     setSelectedEntity(selected);
   };
 
+  // 下载文件功能
+  const downloadFile = (content: string, filename: string, type: 'json' | 'xml') => {
+    if (!content || content.startsWith('//') || content.startsWith('<!--')) return;
+    const blob = new Blob([content], { type: type === 'json' ? 'application/json' : 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // 表格列配置
   const columnHelper = createColumnHelper<any>();
   const columns = queryResult.length > 0 ? Object.keys(queryResult[0])
@@ -321,9 +335,14 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
                 <div className="h-full flex flex-col">
                     <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
                         <span className="text-xs font-bold px-2 text-warning-500">JSON 响应结果</span>
-                        <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawJsonResult)}>
-                            <Copy size={14} />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button isIconOnly size="sm" variant="light" onPress={() => downloadFile(rawJsonResult, 'result.json', 'json')} title="导出 JSON">
+                              <Download size={14} />
+                          </Button>
+                          <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawJsonResult)} title="复制 JSON">
+                              <Copy size={14} />
+                          </Button>
+                        </div>
                     </div>
                     <div className="flex-1 overflow-hidden relative text-sm">
                         <CodeMirror 
@@ -357,9 +376,14 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
                 <div className="h-full flex flex-col">
                     <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
                         <span className="text-xs font-bold px-2 text-primary-500">XML / Atom 响应结果</span>
-                        <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawXmlResult)}>
-                            <Copy size={14} />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button isIconOnly size="sm" variant="light" onPress={() => downloadFile(rawXmlResult, 'result.xml', 'xml')} title="导出 XML">
+                              <Download size={14} />
+                          </Button>
+                          <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawXmlResult)} title="复制 XML">
+                              <Copy size={14} />
+                          </Button>
+                        </div>
                     </div>
                     <div className="flex-1 overflow-hidden relative text-sm">
                          <CodeMirror 
