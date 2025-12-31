@@ -49,7 +49,11 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
   // Context Helpers
   const addActiveEntity = useCallback((id: string) => {
-    setActiveEntityIds(prev => prev.includes(id) ? prev : [...prev, id]);
+    // 逻辑修改：即使 ID 已存在，也将其移动到数组末尾（Bring to Front）
+    setActiveEntityIds(prev => {
+        const others = prev.filter(e => e !== id);
+        return [...others, id];
+    });
   }, []);
 
   const removeActiveEntity = useCallback((id: string) => {
@@ -57,7 +61,11 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   }, []);
 
   const switchActiveEntity = useCallback((fromId: string, toId: string) => {
-    setActiveEntityIds(prev => [...prev.filter(e => e !== fromId), toId]);
+    // 逻辑修改：移除旧ID，移除可能已存在的对应新ID，将新ID加到末尾（Bring to Front）
+    setActiveEntityIds(prev => {
+        const others = prev.filter(e => e !== fromId && e !== toId);
+        return [...others, toId];
+    });
   }, []);
 
   // 用于管理高亮节点 ID 的集合
@@ -347,10 +355,15 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   // 监听 activeEntityIds 变化，提升选中节点的层级 (Z-Index)，防止 Popover 被遮挡
   useEffect(() => {
     setNodes((nds) => nds.map(n => {
-        const isActive = activeEntityIds.includes(n.id);
-        // 如果节点被激活（打开了表格），将其 zIndex 设为 1000（远高于默认值），否则设为 0
-        const targetZIndex = isActive ? 1000 : 0;
+        const activeIndex = activeEntityIds.indexOf(n.id);
         
+        // Dynamic Z-Index Strategy:
+        // - Inactive nodes: 0
+        // - Active nodes: 1000 + index in active array.
+        // This ensures the most recently interacted entity (last in array) is always on top.
+        const targetZIndex = activeIndex !== -1 ? 1000 + activeIndex : 0;
+        
+        // Only update if changed to avoid unnecessary re-renders
         if (n.zIndex !== targetZIndex) {
             return { ...n, zIndex: targetZIndex };
         }
