@@ -5,6 +5,12 @@ export interface EntityProperty {
   type: string;
   nullable: boolean;
   maxLength?: number;
+  fixedLength?: boolean;
+  precision?: number;
+  scale?: number;
+  unicode?: boolean;
+  defaultValue?: string;
+  concurrencyMode?: string;
 }
 
 export interface EntityType {
@@ -140,12 +146,24 @@ export const parseMetadataToSchema = (xmlText: string) => {
         const propNode = props[p];
         const nullableAttr = propNode.getAttribute("Nullable");
         const maxLengthAttr = propNode.getAttribute("MaxLength");
+        const fixedLengthAttr = propNode.getAttribute("FixedLength");
+        const precisionAttr = propNode.getAttribute("Precision");
+        const scaleAttr = propNode.getAttribute("Scale");
+        const unicodeAttr = propNode.getAttribute("Unicode");
+        const defaultValueAttr = propNode.getAttribute("DefaultValue");
+        const concurrencyModeAttr = propNode.getAttribute("ConcurrencyMode");
 
         properties.push({
             name: propNode.getAttribute("Name") || "",
             type: propNode.getAttribute("Type") || "",
             nullable: nullableAttr !== "false", // Default is true usually
-            maxLength: maxLengthAttr ? parseInt(maxLengthAttr) : undefined
+            maxLength: maxLengthAttr ? parseInt(maxLengthAttr) : undefined,
+            fixedLength: fixedLengthAttr === "true",
+            precision: precisionAttr ? parseInt(precisionAttr) : undefined,
+            scale: scaleAttr ? parseInt(scaleAttr) : undefined,
+            unicode: unicodeAttr !== "false", // Default usually true for string
+            defaultValue: defaultValueAttr || undefined,
+            concurrencyMode: concurrencyModeAttr || undefined
         });
     }
 

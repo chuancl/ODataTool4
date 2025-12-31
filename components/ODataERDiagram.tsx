@@ -19,8 +19,8 @@ import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema, EntityProperty } from '@/utils/odata-helper';
 import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip, Switch } from "@nextui-org/react";
-import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus, Zap } from 'lucide-react';
-import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive } from 'lucide-react';
+import { useReactTable, getCoreRowModel, getSortedRowModel, flexRender, createColumnHelper, SortingState } from '@tanstack/react-table';
 
 const elk = new ELK();
 
@@ -61,6 +61,7 @@ const EntityDetailsTable = ({
     keys: string[], 
     getFkInfo: (name: string) => any 
 }) => {
+    const [sorting, setSorting] = useState<SortingState>([]);
     const columnHelper = createColumnHelper<EntityProperty>();
 
     const columns = useMemo(() => [
@@ -69,8 +70,8 @@ const EntityDetailsTable = ({
             cell: info => {
                 const isKey = keys.includes(info.getValue());
                 return (
-                    <div className="flex items-center gap-1">
-                        {isKey && <Key size={10} className="text-warning shrink-0" />}
+                    <div className="flex items-center gap-2">
+                        {isKey ? <Key size={12} className="text-warning shrink-0" /> : <div className="w-3" />}
                         <span className={isKey ? "font-bold text-foreground" : "text-default-700"}>
                             {info.getValue()}
                         </span>
@@ -80,46 +81,62 @@ const EntityDetailsTable = ({
         }),
         columnHelper.accessor('type', {
             header: 'Type',
-            cell: info => <span className="font-mono text-xs text-default-500">{info.getValue().split('.').pop()}</span>
+            cell: info => <span className="font-mono text-xs text-primary/80">{info.getValue().split('.').pop()}</span>
+        }),
+        columnHelper.accessor('maxLength', {
+            header: 'Len',
+            cell: info => info.getValue() ? <span className="text-tiny font-mono">{info.getValue()}</span> : <span className="text-default-300">-</span>
         }),
         columnHelper.accessor('nullable', {
             header: 'Null',
-            cell: info => info.getValue() ? <Check size={12} className="text-success opacity-50"/> : <Minus size={12} className="text-default-300"/>
+            cell: info => info.getValue() ? 
+                <div className="flex justify-center"><Check size={14} className="text-success"/></div> : 
+                <div className="flex justify-center"><Minus size={14} className="text-default-300"/></div>
         }),
         columnHelper.display({
-            id: 'relation',
-            header: 'Relation',
+            id: 'attributes',
+            header: 'Attrs',
             cell: info => {
-                const fk = getFkInfo(info.row.original.name);
-                if (!fk) return null;
+                const p = info.row.original;
                 return (
-                    <div className="flex flex-col text-[9px] leading-tight">
-                        <div className="flex items-center gap-1 text-secondary">
-                            <Link2 size={8} />
-                            <span className="font-bold">{fk.targetEntity}</span>
-                        </div>
-                        <span className="opacity-60 pl-3">.{fk.targetProperty}</span>
+                    <div className="flex gap-1">
+                        {p.fixedLength && <span title="Fixed Length" className="px-1 bg-default-200 rounded text-[9px] font-mono">F</span>}
+                        {p.unicode === false && <span title="Non-Unicode" className="px-1 bg-warning/20 text-warning-700 rounded text-[9px] font-mono">A</span>}
+                        {(p.precision || p.scale) && <span title={`Prec:${p.precision}, Scale:${p.scale}`} className="px-1 bg-primary/10 text-primary rounded text-[9px] font-mono">#{p.precision},{p.scale}</span>}
                     </div>
                 );
             }
-        })
+        }),
     ], [keys, getFkInfo]);
 
     const table = useReactTable({
         data: properties,
         columns,
+        state: { sorting },
+        onSortingChange: setSorting,
         getCoreRowModel: getCoreRowModel(),
+        getSortedRowModel: getSortedRowModel(),
     });
 
     return (
         <div className="w-full">
             <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 z-20 bg-default-100 shadow-sm">
+                <thead className="sticky top-0 z-20 bg-default-100 shadow-sm border-b border-divider">
                     {table.getHeaderGroups().map(headerGroup => (
                         <tr key={headerGroup.id}>
                             {headerGroup.headers.map(header => (
-                                <th key={header.id} className="p-2 text-[10px] font-bold text-default-500 uppercase tracking-wider border-b border-divider">
-                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                <th 
+                                    key={header.id} 
+                                    className="p-2 text-[10px] font-bold text-default-500 uppercase tracking-wider cursor-pointer hover:bg-default-200 transition-colors select-none group"
+                                    onClick={header.column.getToggleSortingHandler()}
+                                >
+                                    <div className="flex items-center gap-1">
+                                        {flexRender(header.column.columnDef.header, header.getContext())}
+                                        {{
+                                            asc: <ChevronUp size={10} />,
+                                            desc: <ChevronDown size={10} />,
+                                        }[header.column.getIsSorted() as string] ?? <ArrowUpDown size={10} className="opacity-0 group-hover:opacity-50" />}
+                                    </div>
                                 </th>
                             ))}
                         </tr>
@@ -127,9 +144,16 @@ const EntityDetailsTable = ({
                 </thead>
                 <tbody>
                     {table.getRowModel().rows.map((row, idx) => (
-                        <tr key={row.id} className={`border-b border-divider/50 last:border-0 ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/50'}`}>
+                        <tr 
+                            key={row.id} 
+                            className={`
+                                border-b border-divider/50 last:border-0 transition-colors
+                                hover:bg-primary/5
+                                ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/50'}
+                            `}
+                        >
                             {row.getVisibleCells().map(cell => (
-                                <td key={cell.id} className="p-2 text-[10px]">
+                                <td key={cell.id} className="p-2 text-[11px] h-8">
                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                 </td>
                             ))}
@@ -137,6 +161,7 @@ const EntityDetailsTable = ({
                     ))}
                 </tbody>
             </table>
+            {properties.length === 0 && <div className="p-4 text-center text-xs text-default-400">No properties found.</div>}
         </div>
     );
 };
@@ -342,8 +367,8 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                     {data.label}
                 </span>
             </PopoverTrigger>
-            <PopoverContent className="w-[400px] p-0">
-                <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden flex flex-col max-h-[500px]">
+            <PopoverContent className="w-[500px] p-0">
+                <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden flex flex-col max-h-[600px]">
                     <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
                         <div className="flex items-center gap-2 font-bold text-default-700">
                             <Database size={16} className="text-primary"/>
@@ -408,28 +433,73 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             {prop.name}
                         </span>
                     </PopoverTrigger>
-                    <PopoverContent className="p-3">
-                        <div className="text-xs flex flex-col gap-2 min-w-[200px]">
-                            <div className="font-bold flex items-center gap-2 border-b border-divider pb-1">
-                                {prop.name}
-                                {isKey && <Chip size="sm" color="warning" variant="flat" className="h-5 text-[9px] px-1">PK</Chip>}
-                                {fkInfo && <Chip size="sm" color="secondary" variant="flat" className="h-5 text-[9px] px-1">FK</Chip>}
-                            </div>
-                            <div className="grid grid-cols-[60px_1fr] gap-1 text-default-600">
-                                <span className="text-default-400">Type:</span> 
-                                <span className="font-mono">{prop.type}</span>
-                                <span className="text-default-400">Nullable:</span>
-                                <span>{prop.nullable ? 'True' : 'False'}</span>
-                                {prop.maxLength && (
-                                    <>
-                                        <span className="text-default-400">Length:</span>
-                                        <span>{prop.maxLength}</span>
-                                    </>
-                                )}
+                    <PopoverContent className="p-3 w-[260px]">
+                        <div className="text-xs flex flex-col gap-2">
+                            <div className="font-bold flex items-center justify-between border-b border-divider pb-2">
+                                <span className="flex items-center gap-2">
+                                    {prop.name}
+                                    {isKey && <Chip size="sm" color="warning" variant="flat" className="h-4 text-[9px] px-1">PK</Chip>}
+                                    {fkInfo && <Chip size="sm" color="secondary" variant="flat" className="h-4 text-[9px] px-1">FK</Chip>}
+                                </span>
                             </div>
                             
+                            <div className="space-y-2">
+                                {/* Basic Info */}
+                                <div className="grid grid-cols-[70px_1fr] gap-1 items-center">
+                                    <span className="text-default-400">Type</span>
+                                    <span className="font-mono bg-default-100 px-1 rounded">{prop.type}</span>
+                                    
+                                    <span className="text-default-400">Nullable</span>
+                                    <span className={prop.nullable ? "text-success" : "text-danger"}>{prop.nullable ? 'True' : 'False'}</span>
+                                    
+                                    {prop.defaultValue && (
+                                        <>
+                                            <span className="text-default-400">Default</span>
+                                            <span className="font-mono text-default-600">{prop.defaultValue}</span>
+                                        </>
+                                    )}
+                                </div>
+
+                                <Divider className="my-1 opacity-50"/>
+                                
+                                {/* Constraints & Formatting */}
+                                <div className="flex flex-wrap gap-2">
+                                    {prop.maxLength !== undefined && (
+                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
+                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><AlignJustify size={10}/> Max Len</span>
+                                            <span className="font-mono font-bold">{prop.maxLength}</span>
+                                        </div>
+                                    )}
+                                    {prop.fixedLength && (
+                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
+                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><AlignJustify size={10}/> Fixed</span>
+                                            <span className="font-mono font-bold text-success">Yes</span>
+                                        </div>
+                                    )}
+                                    {(prop.precision !== undefined || prop.scale !== undefined) && (
+                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
+                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><Hash size={10}/> Prec/Scale</span>
+                                            <span className="font-mono font-bold">{prop.precision || '-'}/{prop.scale || '-'}</span>
+                                        </div>
+                                    )}
+                                    {prop.unicode === false && (
+                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
+                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><CaseSensitive size={10}/> Unicode</span>
+                                            <span className="font-mono font-bold text-warning">False</span>
+                                        </div>
+                                    )}
+                                    {prop.concurrencyMode && (
+                                        <div className="flex flex-col bg-content2 p-1.5 rounded min-w-[60px]">
+                                            <span className="text-[9px] text-default-400 flex items-center gap-1"><Zap size={10}/> Mode</span>
+                                            <span className="font-mono font-bold">{prop.concurrencyMode}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            {/* FK Relation Section */}
                             {fkInfo && (
-                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1">
+                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-2">
                                     <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
                                         <Link2 size={10} /> Foreign Key Relation
                                     </div>
