@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Input, Button, Select, SelectItem, Checkbox, 
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
   Selection, Chip, Tabs, Tab
 } from "@nextui-org/react";
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
-import { generateSAPUI5Code, ODataVersion } from '@/utils/odata-helper';
+import { generateSAPUI5Code, ODataVersion, parseMetadataToSchema, EntityType } from '@/utils/odata-helper';
 import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download } from 'lucide-react';
 
 // Code Mirror & Formatting Imports
@@ -25,6 +25,9 @@ interface Props {
 const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
   const [entitySets, setEntitySets] = useState<string[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<string>('');
+  
+  // 元数据 Schema 状态
+  const [schemas, setSchemas] = useState<EntityType[]>([]);
   
   // 查询参数状态
   const [filter, setFilter] = useState('');
@@ -46,11 +49,12 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
   const [codePreview, setCodePreview] = useState('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
 
-  // 1. 初始化：加载 Metadata 获取实体列表
+  // 1. 初始化：加载 EntitySets 和 Metadata
   useEffect(() => {
     if(!url) return;
     const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
     
+    // 1.1 获取 Entity Sets (用于主下拉框)
     fetch(baseUrl, { headers: { 'Accept': 'application/json' } }) 
       .then(async r => {
         const text = await r.text();
@@ -62,25 +66,64 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
       }) 
       .then(data => {
         let sets: string[] = [];
-        // 根据 OData 版本解析 EntitySets
         if (data && data.d && Array.isArray(data.d.EntitySets)) {
              sets = data.d.EntitySets; // V2
         } else if (data && data.value && Array.isArray(data.value)) {
              sets = data.value.map((v: any) => v.name); // V4
         } else {
-             // Fallback: 如果没有获取到，给一些默认示例
              sets = ['Products', 'Orders', 'Customers', 'Employees', 'Suppliers', 'Categories']; 
         }
         setEntitySets(sets);
         if (sets.length > 0) setSelectedEntity(sets[0]);
       });
+
+    // 1.2 获取 Metadata (用于 Select/Expand 字段提示)
+    const metadataUrl = baseUrl.endsWith('/') ? `${baseUrl}$metadata` : `${baseUrl}/$metadata`;
+    fetch(metadataUrl)
+      .then(res => res.text())
+      .then(xml => {
+         const { entities } = parseMetadataToSchema(xml);
+         setSchemas(entities);
+      })
+      .catch(err => console.error("Metadata fetch failed in QueryBuilder", err));
+
   }, [url]);
+
+  // 计算当前选中实体的 Schema 信息
+  const currentSchema = useMemo(() => {
+      if (!selectedEntity || schemas.length === 0) return null;
+      // 尝试匹配 EntitySet 名称和 EntityType 名称
+      // 1. 精确匹配
+      let match = schemas.find(s => s.name === selectedEntity);
+      // 2. 尝试去 's' (简单的单数化匹配，例如 Sets: Products -> Type: Product)
+      if (!match && selectedEntity.endsWith('s')) {
+          const singular = selectedEntity.slice(0, -1);
+          match = schemas.find(s => s.name === singular);
+      }
+      // 3. 尝试包含匹配
+      if (!match) {
+          match = schemas.find(s => selectedEntity.includes(s.name));
+      }
+      return match;
+  }, [selectedEntity, schemas]);
+
+  // Expand Options Helper to avoid children type error
+  const expandOptions = useMemo(() => {
+    if (!currentSchema) return [];
+    if (currentSchema.navigationProperties.length === 0) {
+        return [{ id: 'none', name: '无关联实体', targetType: '', isPlaceholder: true }];
+    }
+    return currentSchema.navigationProperties.map(nav => ({
+        ...nav,
+        id: nav.name,
+        isPlaceholder: false
+    }));
+  }, [currentSchema]);
 
   // 2. 监听参数变化：自动生成 OData URL
   useEffect(() => {
     const baseUrl = url.endsWith('/') ? url : `${url}/`;
     
-    // 如果尚未选择实体，则仅显示基础 URL，确保 Input 不为空
     if (!selectedEntity) {
         setGeneratedUrl(baseUrl);
         return;
@@ -97,13 +140,12 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
       else params.append('$inlinecount', 'allpages');
     }
     
-    // 使用 decodeURIComponent 保持 URL 可读性（不转义空格等字符）
     const queryString = params.toString();
     const displayQuery = queryString ? `?${decodeURIComponent(queryString)}` : '';
     setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
   }, [url, selectedEntity, filter, select, expand, top, skip, count, version]);
 
-  // 3. 执行查询：同时获取 JSON 和 XML
+  // 3. 执行查询
   const executeQuery = async () => {
     setLoading(true);
     setRawXmlResult('// 正在加载 XML...');
@@ -111,20 +153,15 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
     setQueryResult([]);
 
     try {
-      // 并行发起请求：一个要 JSON 用于表格和 JSON 预览，一个要 XML 用于 XML 预览
-      // 注意：fetch 会自动处理 URL 中的特殊字符，或者我们可以手动 encodeURI(generatedUrl) 如果遇到问题
-      // 这里直接使用 generatedUrl，允许用户手动修改的任何内容被发送
       const [jsonRes, xmlRes] = await Promise.allSettled([
         fetch(generatedUrl, { headers: { 'Accept': 'application/json' } }),
         fetch(generatedUrl, { headers: { 'Accept': 'application/xml, application/atom+xml' } })
       ]);
 
-      // 处理 JSON 响应 (用于表格渲染)
       if (jsonRes.status === 'fulfilled' && jsonRes.value.ok) {
         const text = await jsonRes.value.text();
         try {
           const data = JSON.parse(text);
-          // 兼容不同版本的 OData 返回结构 (V2 d.results, V4 value)
           const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
           setQueryResult(results);
           setRawJsonResult(JSON.stringify(data, null, 2));
@@ -138,10 +175,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
         setRawJsonResult(errorMsg);
       }
 
-      // 处理 XML 响应
       if (xmlRes.status === 'fulfilled' && xmlRes.value.ok) {
         const text = await xmlRes.value.text();
-        // 使用 xml-formatter 进行美化，并允许折叠内容
         try {
             const formatted = xmlFormat(text, { 
                 indentation: '  ', 
@@ -151,7 +186,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
             });
             setRawXmlResult(formatted);
         } catch (err) {
-            setRawXmlResult(text); // Fallback to raw if formatter fails
+            setRawXmlResult(text);
         }
       } else {
         const errorMsg = xmlRes.status === 'fulfilled'
@@ -187,9 +222,12 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
   const handleEntityChange = (keys: Selection) => {
     const selected = Array.from(keys).join('');
     setSelectedEntity(selected);
+    // 重置参数
+    setSelect('');
+    setExpand('');
+    setFilter('');
   };
 
-  // 下载文件功能
   const downloadFile = (content: string, filename: string, type: 'json' | 'xml') => {
     if (!content || content.startsWith('//') || content.startsWith('<!--')) return;
     const blob = new Blob([content], { type: type === 'json' ? 'application/json' : 'application/xml' });
@@ -203,7 +241,6 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
     URL.revokeObjectURL(url);
   };
 
-  // 表格列配置
   const columnHelper = createColumnHelper<any>();
   const columns = queryResult.length > 0 ? Object.keys(queryResult[0])
     .filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata') 
@@ -217,7 +254,6 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
     getCoreRowModel: getCoreRowModel(),
   });
 
-  // 编辑器主题配置
   const editorTheme = isDark ? vscodeDark : githubLight;
 
   return (
@@ -232,15 +268,71 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
             onSelectionChange={handleEntityChange}
             variant="bordered"
             size="sm"
+            items={entitySets.map(e => ({ key: e, label: e }))}
           >
-            {entitySets.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+            {(item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>}
           </Select>
         </div>
         
         <div className="md:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-4">
           <Input label="过滤 ($filter)" placeholder="例如: Price gt 20" value={filter} onValueChange={setFilter} size="sm" variant="bordered" />
-          <Input label="字段 ($select)" placeholder="例如: Name,Price" value={select} onValueChange={setSelect} size="sm" variant="bordered" />
-          <Input label="展开 ($expand)" placeholder="例如: Category" value={expand} onValueChange={setExpand} size="sm" variant="bordered" />
+          
+          {/* 智能 Select 字段选择 */}
+          {currentSchema ? (
+             <Select
+                label="字段 ($select)"
+                placeholder="选择返回字段"
+                selectionMode="multiple"
+                selectedKeys={new Set(select ? select.split(',') : [])}
+                onSelectionChange={(keys) => setSelect(Array.from(keys).join(','))}
+                size="sm"
+                variant="bordered"
+                classNames={{ value: "text-xs" }}
+                items={currentSchema.properties}
+             >
+                {(p) => (
+                    <SelectItem key={p.name} value={p.name} textValue={p.name}>
+                        <div className="flex flex-col">
+                            <span className="text-small">{p.name}</span>
+                            <span className="text-tiny text-default-400">{p.type.split('.').pop()}</span>
+                        </div>
+                    </SelectItem>
+                )}
+             </Select>
+          ) : (
+             <Input label="字段 ($select)" placeholder="例如: Name,Price" value={select} onValueChange={setSelect} size="sm" variant="bordered" />
+          )}
+
+          {/* 智能 Expand 展开选择 */}
+          {currentSchema ? (
+             <Select
+                label="展开 ($expand)"
+                placeholder="选择关联实体"
+                selectionMode="multiple"
+                selectedKeys={new Set(expand ? expand.split(',') : [])}
+                onSelectionChange={(keys) => setExpand(Array.from(keys).filter(k => k !== 'none').join(','))}
+                size="sm"
+                variant="bordered"
+                classNames={{ value: "text-xs" }}
+                items={expandOptions}
+             >
+                 {(item) => (
+                    <SelectItem key={item.id} value={item.name} textValue={item.name} isReadOnly={item.isPlaceholder}>
+                        {item.isPlaceholder ? (
+                            "无关联实体"
+                        ) : (
+                            <div className="flex flex-col">
+                                <span className="text-small">{item.name}</span>
+                                <span className="text-tiny text-default-400">To: {item.targetType?.split('.').pop()}</span>
+                            </div>
+                        )}
+                    </SelectItem>
+                 )}
+             </Select>
+          ) : (
+             <Input label="展开 ($expand)" placeholder="例如: Category" value={expand} onValueChange={setExpand} size="sm" variant="bordered" />
+          )}
+
           <div className="flex gap-2 items-center">
              <Input label="Top" value={top} onValueChange={setTop} size="sm" variant="bordered" className="w-16" />
              <Input label="Skip" value={skip} onValueChange={setSkip} size="sm" variant="bordered" className="w-16" />
@@ -254,7 +346,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
         <Chip size="sm" color="primary" variant="flat" className="shrink-0">GET</Chip>
         <Input 
           value={generatedUrl}
-          onValueChange={setGeneratedUrl} // 允许用户手动修改
+          onValueChange={setGeneratedUrl} 
           size="sm" 
           variant="flat" 
           className="font-mono text-sm"
