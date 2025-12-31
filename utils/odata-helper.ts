@@ -1,9 +1,16 @@
 export type ODataVersion = 'V2' | 'V3' | 'V4' | 'Unknown';
 
-interface EntityType {
+export interface EntityProperty {
+  name: string;
+  type: string;
+  nullable: boolean;
+  maxLength?: number;
+}
+
+export interface EntityType {
   name: string;
   keys: string[];
-  properties: { name: string; type: string }[];
+  properties: EntityProperty[];
   navigationProperties: { 
     name: string; 
     targetType: string | null; 
@@ -127,12 +134,18 @@ export const parseMetadataToSchema = (xmlText: string) => {
     }
 
     // Properties
-    const properties: { name: string; type: string }[] = [];
+    const properties: EntityProperty[] = [];
     const props = et.getElementsByTagName("Property");
     for (let p = 0; p < props.length; p++) {
+        const propNode = props[p];
+        const nullableAttr = propNode.getAttribute("Nullable");
+        const maxLengthAttr = propNode.getAttribute("MaxLength");
+
         properties.push({
-            name: props[p].getAttribute("Name") || "",
-            type: props[p].getAttribute("Type") || ""
+            name: propNode.getAttribute("Name") || "",
+            type: propNode.getAttribute("Type") || "",
+            nullable: nullableAttr !== "false", // Default is true usually
+            maxLength: maxLengthAttr ? parseInt(maxLengthAttr) : undefined
         });
     }
 
