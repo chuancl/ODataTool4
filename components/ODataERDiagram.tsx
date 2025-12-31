@@ -344,6 +344,20 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
       }));
   }, [highlightedIds, setNodes, setEdges]);
 
+  // 监听 activeEntityIds 变化，提升选中节点的层级 (Z-Index)，防止 Popover 被遮挡
+  useEffect(() => {
+    setNodes((nds) => nds.map(n => {
+        const isActive = activeEntityIds.includes(n.id);
+        // 如果节点被激活（打开了表格），将其 zIndex 设为 1000（远高于默认值），否则设为 0
+        const targetZIndex = isActive ? 1000 : 0;
+        
+        if (n.zIndex !== targetZIndex) {
+            return { ...n, zIndex: targetZIndex };
+        }
+        return n;
+    }));
+  }, [activeEntityIds, setNodes]);
+
   const resetView = () => {
      setHighlightedIds(new Set());
      setActiveEntityIds([]); // Close all when manually resetting via button
