@@ -93,10 +93,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         
         const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
         
-        // 如果有扩展字段，不需要“全选”逻辑（因为它通常只针对主实体），或者全选只选主实体
-        // 这里为了简单，保留全选作为“全选主实体字段”
         const items = [
-            { name: ALL_KEY, type: 'Special', label: '全选主实体 (Select All Main)', isExpanded: false },
+            { name: ALL_KEY, type: 'Special', label: '全选 (Select All)', isExpanded: false },
             ...mainProps,
             ...expandedEntityProperties
         ];
@@ -106,36 +104,45 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
 
     const currentSelectKeys = useMemo(() => {
         const selected = new Set(select ? select.split(',') : []);
-        // 全选逻辑仅判断主实体属性是否都已选中
+        
         if (currentSchema) {
-            const mainPropNames = currentSchema.properties.map(p => p.name);
-            const allMainSelected = mainPropNames.length > 0 && mainPropNames.every(n => selected.has(n));
-            if (allMainSelected) {
+            // 获取下拉框中所有可选项的 Key (主实体 + 扩展实体)
+            const allAvailableKeys = [
+                ...currentSchema.properties.map(p => p.name),
+                ...expandedEntityProperties.map(p => p.name)
+            ];
+            
+            // 判断是否所有可选项都已被选中
+            const allSelected = allAvailableKeys.length > 0 && allAvailableKeys.every(n => selected.has(n));
+            
+            if (allSelected) {
                 selected.add(ALL_KEY);
             }
         }
         return selected;
-    }, [select, currentSchema]);
+    }, [select, currentSchema, expandedEntityProperties]);
 
     const handleSelectChange = (keys: Selection) => {
         if (!currentSchema) return;
         const newSet = new Set(keys);
-        const allMainProps = currentSchema.properties.map(p => p.name);
+        
+        // 计算当前所有可用的字段 (主实体 + 扩展实体)
+        const allAvailableKeys = [
+            ...currentSchema.properties.map(p => p.name),
+            ...expandedEntityProperties.map(p => p.name)
+        ];
 
         const wasAllSelected = currentSelectKeys.has(ALL_KEY);
         const isAllSelected = newSet.has(ALL_KEY);
 
-        // 如果之前选中的包含了扩展属性，我们希望保留它们，除非用户手动反选
-        const currentExpandedSelected = select ? select.split(',').filter(s => s.includes('/')) : [];
-
         let finalSelection: string[] = [];
 
         if (isAllSelected && !wasAllSelected) {
-            // 点击了全选 -> 选中所有主实体 + 保持已选的扩展属性
-            finalSelection = [...allMainProps, ...currentExpandedSelected];
+            // 点击了全选 -> 选中所有 (包括扩展字段)
+            finalSelection = allAvailableKeys;
         } else if (!isAllSelected && wasAllSelected) {
-            // 取消了全选 -> 清空主实体 + 保持已选的扩展属性
-            finalSelection = [...currentExpandedSelected];
+            // 取消了全选 -> 清空所有
+            finalSelection = [];
         } else {
             // 普通选择
             newSet.delete(ALL_KEY);
