@@ -14,6 +14,9 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const updateNodeInternals = useUpdateNodeInternals();
   const { fitView, getNodes } = useReactFlow();
   const [isExpanded, setIsExpanded] = useState(false);
+  // 新增状态：控制属性详情 Popover 的显隐，存储当前打开的属性名
+  const [activePopoverProp, setActivePopoverProp] = useState<string | null>(null);
+  
   const { activeEntityIds, addActiveEntity, removeActiveEntity, switchActiveEntity } = useContext(DiagramContext);
 
   // Determine if this entity popover should be open
@@ -171,6 +174,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
             const fieldColor = data.fieldColors?.[prop.name];
             const isKey = data.keys.includes(prop.name);
             const fkInfo = getForeignKeyInfo(prop.name);
+            const isOpen = activePopoverProp === prop.name;
 
             return (
               <div 
@@ -186,8 +190,14 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                   {isKey && <Key size={8} className="shrink-0 text-warning" />}
                   {fkInfo && <Link2 size={8} className="shrink-0 text-secondary" />}
                   
-                  {/* Property Details Popover (Keep as standard Popover for hover interactions) */}
-                  <Popover placement="right" showArrow offset={10}>
+                  {/* Property Details Popover (Controlled) */}
+                  <Popover 
+                    placement="right" 
+                    showArrow 
+                    offset={10}
+                    isOpen={isOpen}
+                    onOpenChange={(open) => setActivePopoverProp(open ? prop.name : null)}
+                  >
                       <PopoverTrigger>
                           <span 
                               className="cursor-pointer hover:text-primary transition-colors hover:underline decoration-dotted" 
@@ -270,7 +280,11 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                               {/* FK Relation Section */}
                               {fkInfo && (
                                   <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1 cursor-pointer hover:bg-secondary/20 transition-colors"
-                                      onClick={(e) => { e.stopPropagation(); handleJumpToEntity(fkInfo.targetEntity, false); }}
+                                      onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          setActivePopoverProp(null); // 关闭 Popover
+                                          handleJumpToEntity(fkInfo.targetEntity, false); 
+                                      }}
                                   >
                                       <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
                                           <Link2 size={10} /> Foreign Key Relation
