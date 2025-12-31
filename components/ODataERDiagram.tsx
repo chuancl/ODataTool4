@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import ReactFlow, { 
   Controls, 
   Background, 
@@ -11,13 +11,15 @@ import ReactFlow, {
   Edge,
   Node,
   useStore,
-  useUpdateNodeInternals
+  useUpdateNodeInternals,
+  useReactFlow,
+  ReactFlowProvider
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema } from '@/utils/odata-helper';
-import { Button, Spinner } from "@nextui-org/react";
-import { Key, Link2 } from 'lucide-react';
+import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip } from "@nextui-org/react";
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database } from 'lucide-react';
 
 const elk = new ELK();
 
@@ -38,7 +40,7 @@ const PALETTE = [
 
 const getColor = (index: number) => PALETTE[index % PALETTE.length];
 
-// --- 新增：动态 Handle 配置接口 ---
+// --- 动态 Handle 配置接口 ---
 interface DynamicHandleConfig {
   id: string;
   type: 'source' | 'target';
@@ -47,40 +49,28 @@ interface DynamicHandleConfig {
 }
 
 // --------------------------------------------------------
-// Core Logic: 动态布局计算函数 (提取到组件外)
+// Core Logic: 动态布局计算函数
 // --------------------------------------------------------
 const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
-  // 1. 建立索引
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
-  
-  // 存储连接信息用于排序
-  // NodeID -> Position -> List of connections
   const connections: Record<string, Record<string, any[]>> = {};
 
-  // 初始化结构
   nodes.forEach(n => {
     connections[n.id] = {
-        [Position.Top]: [],
-        [Position.Right]: [],
-        [Position.Bottom]: [],
-        [Position.Left]: []
+        [Position.Top]: [], [Position.Right]: [], [Position.Bottom]: [], [Position.Left]: []
     };
   });
 
-  // 2. 遍历边，确定每一条边的最佳连接方向
-  // 这一步决定了边是从哪个面出来的
   const updatedEdges = edges.map(edge => {
       const sourceNode = nodeMap.get(edge.source);
       const targetNode = nodeMap.get(edge.target);
-      
       if (!sourceNode || !targetNode) return { ...edge };
 
-      // 使用当前位置计算中心点
-      // 注意：如果 width/height 缺失，使用默认值
-      const sW = sourceNode.width || 220;
-      const sH = sourceNode.height || 150;
-      const tW = targetNode.width || 220;
-      const tH = targetNode.height || 150;
+      // 如果节点尚未渲染（例如刚展开），可能没有 width/height，使用估算值
+      const sW = sourceNode.width || 250;
+      const sH = sourceNode.height || 200;
+      const tW = targetNode.width || 250;
+      const tH = targetNode.height || 200;
 
       const sx = sourceNode.position.x + sW / 2;
       const sy = sourceNode.position.y + sH / 2;
@@ -91,38 +81,25 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
       const dy = ty - sy;
       
       let sourcePos: Position, targetPos: Position;
-
-      // 简单的方向判定逻辑: 哪个轴距离更远，就用哪个轴连接
       if (Math.abs(dx) > Math.abs(dy)) {
-          // 水平距离大，左右连接
           sourcePos = dx > 0 ? Position.Right : Position.Left;
           targetPos = dx > 0 ? Position.Left : Position.Right;
       } else {
-          // 垂直距离大，上下连接
           sourcePos = dy > 0 ? Position.Bottom : Position.Top;
           targetPos = dy > 0 ? Position.Top : Position.Bottom;
       }
 
-      // 记录连接，用于后续排序
-      // 我们需要知道"对方"的坐标，以便让线不交叉
       connections[sourceNode.id]?.[sourcePos]?.push({
-          edgeId: edge.id,
-          type: 'source',
-          otherX: tx,
-          otherY: ty
+          edgeId: edge.id, type: 'source', otherX: tx, otherY: ty
       });
 
       connections[targetNode.id]?.[targetPos]?.push({
-          edgeId: edge.id,
-          type: 'target',
-          otherX: sx,
-          otherY: sy
+          edgeId: edge.id, type: 'target', otherX: sx, otherY: sy
       });
 
-      return { ...edge }; // 返回副本
+      return { ...edge };
   });
 
-  // 3. 对每个节点的每个面进行排序，并生成 Handle
   const updatedNodes = nodes.map(node => {
       const dynamicHandles: DynamicHandleConfig[] = [];
       const nodeConns = connections[node.id];
@@ -131,162 +108,303 @@ const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
           Object.values(Position).forEach(pos => {
               const list = nodeConns[pos];
               if (list && list.length > 0) {
-                  // 排序逻辑：
-                  // 如果是 Top/Bottom (垂直面)，按对方的 X 坐标排序 -> 保证线平行不交叉
-                  // 如果是 Left/Right (水平面)，按对方的 Y 坐标排序
                   list.sort((a, b) => {
-                      if (pos === Position.Top || pos === Position.Bottom) {
-                          return a.otherX - b.otherX;
-                      } else {
-                          return a.otherY - b.otherY;
-                      }
+                      if (pos === Position.Top || pos === Position.Bottom) return a.otherX - b.otherX;
+                      else return a.otherY - b.otherY;
                   });
 
-                  // 生成均匀分布的 Handle
                   list.forEach((conn, index) => {
                       const count = list.length;
-                      // 均匀分布算法：(index + 1) / (count + 1) * 100%
                       const offset = ((index + 1) * 100) / (count + 1);
-                      
-                      // [CRITICAL FIX]: 
-                      // Handle ID 必须是确定的，不能依赖 Position 或 Index，否则拖动时 ID 变化会导致连线断裂。
-                      // 我们使用 Edge ID + Role 作为唯一标识。
-                      // 这样即使 Handle 从 Top 移动到 Left，它的 ID 仍然不变，React Flow 就能保持连接。
                       const handleId = `${conn.edgeId}-${conn.type}`;
                       
                       dynamicHandles.push({
-                          id: handleId,
-                          type: conn.type, // 'source' or 'target'
-                          position: pos,
-                          offset: offset
+                          id: handleId, type: conn.type, position: pos, offset: offset
                       });
 
-                      // 回填 Edge 的 handle ID
                       const edge = updatedEdges.find((e: any) => e.id === conn.edgeId);
                       if (edge) {
-                          if (conn.type === 'source') {
-                              edge.sourceHandle = handleId;
-                          } else {
-                              edge.targetHandle = handleId;
-                          }
+                          if (conn.type === 'source') edge.sourceHandle = handleId;
+                          else edge.targetHandle = handleId;
                       }
                   });
               }
           });
       }
-      
-      return {
-          ...node,
-          data: { ...node.data, dynamicHandles }
-      };
+      return { ...node, data: { ...node.data, dynamicHandles } };
   });
 
   return { nodes: updatedNodes, edges: updatedEdges };
 };
 
 
-// 实体节点组件
+// --------------------------------------------------------
+// Component: EntityNode
+// --------------------------------------------------------
 const EntityNode = ({ id, data, selected }: NodeProps) => {
-  // 必须引入此 Hook 通知 React Flow 更新内部句柄位置
   const updateNodeInternals = useUpdateNodeInternals();
-  
-  // 从 data 中获取动态计算好的 handles
-  const dynamicHandles: DynamicHandleConfig[] = data.dynamicHandles || [];
+  const { fitView, getNodes } = useReactFlow();
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showEntityDetails, setShowEntityDetails] = useState(false);
 
-  // 当 dynamicHandles 变化时，触发重绘
+  // 监听 Handles 变化
+  const dynamicHandles: DynamicHandleConfig[] = data.dynamicHandles || [];
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, updateNodeInternals, JSON.stringify(dynamicHandles)]);
 
+  // 当展开状态变化时，也需要更新内部布局
+  useEffect(() => {
+    // 稍微延迟一下，等待 DOM 渲染完成高度变化
+    const timer = setTimeout(() => updateNodeInternals(id), 50);
+    return () => clearTimeout(timer);
+  }, [isExpanded, id, updateNodeInternals]);
+
+  // 处理导航跳转
+  const handleJumpToEntity = (e: React.MouseEvent, targetEntityName: string) => {
+    e.stopPropagation();
+    // 尝试找到目标节点
+    // 假设 ID 就是 Entity Name (目前的逻辑是这样的)
+    const targetId = targetEntityName;
+    const nodes = getNodes();
+    const targetNode = nodes.find(n => n.id === targetId);
+
+    if (targetNode) {
+      fitView({
+        nodes: [{ id: targetId }],
+        padding: 0.5,
+        duration: 1000,
+      });
+    } else {
+      console.warn(`Target node ${targetId} not found.`);
+    }
+  };
+
+  // 查找某个属性是否是外键，并返回关联信息
+  const getForeignKeyInfo = (propName: string) => {
+    if (!data.navigationProperties) return null;
+    
+    for (const nav of data.navigationProperties) {
+      if (nav.constraints) {
+        const constraint = nav.constraints.find((c: any) => c.sourceProperty === propName);
+        if (constraint) {
+          // 清理 Target Type 名称
+          let targetTypeClean = nav.targetType;
+          if (targetTypeClean?.startsWith('Collection(')) targetTypeClean = targetTypeClean.slice(11, -1);
+          targetTypeClean = targetTypeClean?.split('.').pop();
+
+          return {
+            targetEntity: targetTypeClean,
+            targetProperty: constraint.targetProperty,
+            navName: nav.name
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  const visibleProperties = isExpanded ? data.properties : data.properties.slice(0, 12);
+  const hiddenCount = data.properties.length - 12;
+
   return (
-    <div className={`border-2 rounded-lg min-w-[200px] bg-content1 transition-all ${selected ? 'border-primary shadow-xl ring-2 ring-primary/20' : 'border-divider shadow-sm'}`}>
+    <div className={`
+      relative flex flex-col
+      border-2 rounded-lg min-w-[240px] max-w-[300px] bg-content1 transition-all
+      ${selected ? 'border-primary shadow-2xl ring-2 ring-primary/30 z-50' : 'border-divider shadow-sm'}
+    `}>
       
-      {/* 动态渲染 Handles，均匀分布在边框上 */}
+      {/* Dynamic Handles */}
       {dynamicHandles.map((handle) => {
         const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
         const style: React.CSSProperties = {
           position: 'absolute',
-          // 根据方向设置偏移量，实现均匀分布
           [isVertical ? 'left' : 'top']: `${handle.offset}%`,
-          // 样式微调，使其不可见或为小点，避免视觉干扰，这里设为透明但保留交互区域
           opacity: 0, 
-          width: '8px', 
-          height: '8px',
-          background: 'var(--nextui-colors-primary)',
+          width: '12px', height: '12px', // 稍微加大一点交互区域
           zIndex: 10,
         };
 
-        // 修正位置偏移，让其正好骑在边线上
-        if (handle.position === Position.Top) style.top = '-4px';
-        if (handle.position === Position.Bottom) style.bottom = '-4px';
-        if (handle.position === Position.Left) style.left = '-4px';
-        if (handle.position === Position.Right) style.right = '-4px';
+        if (handle.position === Position.Top) style.top = '-6px';
+        if (handle.position === Position.Bottom) style.bottom = '-6px';
+        if (handle.position === Position.Left) style.left = '-6px';
+        if (handle.position === Position.Right) style.right = '-6px';
 
-        return (
-          <Handle 
-            key={handle.id} // Stable Key based on stable ID
-            id={handle.id}
-            type={handle.type}
-            position={handle.position}
-            style={style}
-          />
-        );
+        return <Handle key={handle.id} id={handle.id} type={handle.type} position={handle.position} style={style} />;
       })}
 
-      {/* 标题栏 */}
-      <div className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md">
-         {data.label}
-      </div>
+      {/* --- Entity Title Popover --- */}
+      <Popover 
+        isOpen={showEntityDetails} 
+        onOpenChange={setShowEntityDetails}
+        placement="right-start" 
+        offset={20}
+        shouldFlip
+        isDismissable={false} // 手动关闭
+        shouldCloseOnBlur={false} // 点击外部不关闭? 需求说 "鼠标移开pop不消失，需手动关闭" -> 所以用受控模式 + 按钮
+        motionProps={{
+            variants: {
+            enter: { y: 0, opacity: 1, scale: 1, transition: { duration: 0.15, ease: "easeOut" } },
+            exit: { y: 10, opacity: 0, scale: 0.95, transition: { duration: 0.1, ease: "easeIn" } },
+            },
+        }}
+      >
+        <PopoverTrigger>
+          <div 
+            className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md cursor-pointer hover:bg-primary/20 transition-colors flex items-center justify-center gap-2 group"
+            onClick={(e) => { e.stopPropagation(); setShowEntityDetails(true); }}
+          >
+             <Table2 size={14} />
+             <span>{data.label}</span>
+             <Info size={12} className="opacity-0 group-hover:opacity-50 transition-opacity" />
+          </div>
+        </PopoverTrigger>
+        <PopoverContent className="w-[320px] p-0">
+            <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden">
+                <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider">
+                    <div className="flex items-center gap-2 font-bold text-default-700">
+                        <Database size={16} className="text-primary"/>
+                        {data.label}
+                    </div>
+                    <Button isIconOnly size="sm" variant="light" onPress={() => setShowEntityDetails(false)}>
+                        <X size={16} />
+                    </Button>
+                </div>
+                <div className="p-4 flex flex-col gap-3 text-sm">
+                    <div className="grid grid-cols-3 gap-2">
+                        <div className="text-default-500">Namespace</div>
+                        <div className="col-span-2 font-mono text-xs bg-default-50 p-1 rounded">{data.namespace || 'N/A'}</div>
+                        
+                        <div className="text-default-500">Keys</div>
+                        <div className="col-span-2 flex flex-wrap gap-1">
+                            {data.keys.map((k: string) => (
+                                <Badge key={k} color="warning" variant="flat" size="sm" className="static">{k}</Badge>
+                            ))}
+                        </div>
 
-      {/* 内容区域 */}
+                        <div className="text-default-500">Properties</div>
+                        <div className="col-span-2 text-default-700">{data.properties.length} fields</div>
+
+                        <div className="text-default-500">Relations</div>
+                        <div className="col-span-2 text-default-700">{data.navigationProperties?.length || 0} links</div>
+                    </div>
+                </div>
+                <div className="bg-default-50 p-2 text-xs text-default-400 text-center border-t border-divider">
+                    Entity Type Details
+                </div>
+            </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* Content Area */}
       <div className="p-2 flex flex-col gap-0.5 bg-content1 rounded-b-md">
         
-        {/* 普通属性 */}
-        {data.properties.slice(0, 12).map((prop: any) => {
+        {/* --- Properties --- */}
+        {visibleProperties.map((prop: any) => {
           const fieldColor = data.fieldColors?.[prop.name];
-          
+          const isKey = data.keys.includes(prop.name);
+          const fkInfo = getForeignKeyInfo(prop.name);
+
           return (
-            <div 
-              key={prop.name} 
-              className={`text-[10px] flex items-center justify-between p-1 rounded-sm border-l-2 transition-colors
-                ${data.keys.includes(prop.name) ? 'bg-warning/10 text-warning-700 font-semibold' : 'text-default-600'}
-                ${fieldColor ? '' : 'border-transparent'}
-              `}
-              style={fieldColor ? { borderColor: fieldColor, backgroundColor: `${fieldColor}15` } : {}}
-            >
-               <span className="flex items-center gap-1 truncate max-w-[130px]" title={prop.name}>
-                 {data.keys.includes(prop.name) && <Key size={8} className="shrink-0" />}
-                 <span style={fieldColor ? { color: fieldColor, fontWeight: 700 } : {}}>{prop.name}</span>
-               </span>
-               <span className="text-[9px] text-default-400 ml-1 opacity-70">{prop.type.split('.').pop()}</span>
-            </div>
+            <Popover key={prop.name} placement="right" showArrow offset={10}>
+                <PopoverTrigger>
+                    <div 
+                      className={`
+                        text-[10px] flex items-center justify-between p-1.5 rounded-sm border-l-2 transition-colors cursor-pointer group
+                        ${isKey ? 'bg-warning/10 text-warning-700 font-semibold' : 'text-default-600 hover:bg-default-100'}
+                        ${fieldColor ? '' : 'border-transparent'}
+                      `}
+                      style={fieldColor ? { borderColor: fieldColor, backgroundColor: `${fieldColor}15` } : {}}
+                      onClick={(e) => e.stopPropagation()} // 阻止触发节点点击
+                    >
+                       <span className="flex items-center gap-1.5 truncate max-w-[140px]">
+                         {isKey && <Key size={8} className="shrink-0 text-warning" />}
+                         {fkInfo && <Link2 size={8} className="shrink-0 text-secondary" />}
+                         <span style={fieldColor ? { color: fieldColor, fontWeight: 700 } : {}}>{prop.name}</span>
+                       </span>
+                       <span className="text-[9px] text-default-400 ml-1 opacity-70 font-mono group-hover:opacity-100">{prop.type.split('.').pop()}</span>
+                    </div>
+                </PopoverTrigger>
+                <PopoverContent className="p-3">
+                    <div className="text-xs flex flex-col gap-2 min-w-[200px]">
+                        <div className="font-bold flex items-center gap-2 border-b border-divider pb-1">
+                            {prop.name}
+                            {isKey && <Chip size="sm" color="warning" variant="flat" className="h-5 text-[9px] px-1">PK</Chip>}
+                            {fkInfo && <Chip size="sm" color="secondary" variant="flat" className="h-5 text-[9px] px-1">FK</Chip>}
+                        </div>
+                        <div className="grid grid-cols-[60px_1fr] gap-1 text-default-600">
+                            <span className="text-default-400">Type:</span> 
+                            <span className="font-mono">{prop.type}</span>
+                        </div>
+                        
+                        {fkInfo && (
+                            <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1">
+                                <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
+                                    <Link2 size={10} /> Foreign Key Relation
+                                </div>
+                                <div className="grid grid-cols-[50px_1fr] gap-1 text-[10px]">
+                                    <span className="opacity-70">To:</span> <span className="font-bold">{fkInfo.targetEntity}</span>
+                                    <span className="opacity-70">Field:</span> <span className="font-mono">{fkInfo.targetProperty}</span>
+                                    <span className="opacity-70">Via:</span> <span className="italic opacity-80">{fkInfo.navName}</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </PopoverContent>
+            </Popover>
           );
         })}
-        {data.properties.length > 12 && (
-            <div className="text-[9px] text-default-300 text-center pt-1 italic">
-                + {data.properties.length - 12} properties
+
+        {/* --- Expand Button --- */}
+        {!isExpanded && hiddenCount > 0 && (
+            <div 
+                className="text-[9px] text-primary cursor-pointer hover:bg-primary/5 p-1 rounded text-center flex items-center justify-center gap-1 transition-colors mt-1 border border-dashed border-divider hover:border-primary/50"
+                onClick={(e) => { e.stopPropagation(); setIsExpanded(true); }}
+            >
+                <ChevronDown size={10} />
+                <span>Show {hiddenCount} hidden properties</span>
+            </div>
+        )}
+         {isExpanded && hiddenCount > 0 && (
+            <div 
+                className="text-[9px] text-default-400 cursor-pointer hover:bg-default-100 p-1 rounded text-center flex items-center justify-center gap-1 transition-colors mt-1"
+                onClick={(e) => { e.stopPropagation(); setIsExpanded(false); }}
+            >
+                <ChevronUp size={10} />
+                <span>Collapse properties</span>
             </div>
         )}
 
-        {/* 导航属性 */}
+        {/* --- Navigation Properties --- */}
         {data.navigationProperties && data.navigationProperties.length > 0 && (
             <>
-                <div className="h-px bg-divider my-1 mx-1 opacity-50" />
-                {data.navigationProperties.slice(0, 8).map((nav: any) => {
+                <div className="h-px bg-divider my-2 mx-1 opacity-50" />
+                <div className="px-1 mb-1 text-[9px] font-bold text-default-400 uppercase tracking-wider">Navigation</div>
+                {data.navigationProperties.slice(0, isExpanded ? undefined : 8).map((nav: any) => {
                     const cleanType = nav.targetType?.replace('Collection(', '').replace(')', '').split('.').pop();
+                    const isCollection = nav.targetType?.startsWith('Collection');
+                    
                     return (
-                        <div key={nav.name} className="text-[10px] flex items-center justify-between p-1 rounded-sm text-default-500 hover:text-primary transition-colors">
-                            <span className="flex items-center gap-1 truncate max-w-[130px]" title={`Navigation: ${nav.name}`}>
-                                <Link2 size={8} className="shrink-0 opacity-70" />
-                                <span className="italic font-medium">{nav.name}</span>
+                        <div 
+                            key={nav.name} 
+                            className="text-[10px] flex items-center justify-between p-1.5 rounded-sm text-secondary-600 bg-secondary/5 hover:bg-secondary/20 border border-transparent hover:border-secondary/30 transition-all cursor-pointer group mb-0.5"
+                            onClick={(e) => handleJumpToEntity(e, cleanType)}
+                            title={`Jump to ${cleanType}`}
+                        >
+                            <span className="flex items-center gap-1.5 truncate max-w-[130px]">
+                                <ArrowRightCircle size={10} className="shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
+                                <span className="font-medium">{nav.name}</span>
                             </span>
-                            <span className="text-[9px] opacity-50 truncate max-w-[60px]">{cleanType}</span>
+                            <div className="flex items-center gap-1">
+                                <span className="text-[8px] opacity-50 font-mono">{isCollection ? '1..N' : '1..1'}</span>
+                                <span className="text-[9px] opacity-70 truncate max-w-[60px] font-bold">{cleanType}</span>
+                            </div>
                         </div>
                     );
                 })}
-                 {data.navigationProperties.length > 8 && (
+                 {data.navigationProperties.length > 8 && !isExpanded && (
                     <div className="text-[9px] text-default-300 text-center pt-1 italic">
-                        + {data.navigationProperties.length - 8} nav props
+                        + {data.navigationProperties.length - 8} relations
                     </div>
                 )}
             </>
@@ -302,7 +420,19 @@ interface Props {
   url: string;
 }
 
-const ODataERDiagram: React.FC<Props> = ({ url }) => {
+// --------------------------------------------------------
+// Main Component Wrapper (Required for ReactFlowProvider)
+// --------------------------------------------------------
+const ODataERDiagram: React.FC<Props> = (props) => {
+    return (
+        <ReactFlowProvider>
+            <ODataERDiagramContent {...props} />
+        </ReactFlowProvider>
+    );
+};
+
+
+const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(false);
@@ -329,12 +459,8 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
     }
     lastDragTime.current = now;
 
-    // 取消上一次未执行的 RAF，避免堆积
-    if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-    }
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
-    // 在下一次重绘前执行计算
     rafRef.current = requestAnimationFrame(() => {
         const currentNodes = nodesRef.current;
         const currentEdges = edgesRef.current;
@@ -352,11 +478,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         // 2. 重新计算布局
         const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
         
-        // 3. 更新状态
         setNodes(newNodes);
-        // 重要优化：如果 Edge ID 和 Handle ID 逻辑不变，其实 setEdges 是可选的。
-        // 但为了确保首次拖动初始化等情况，我们还是调用它。
-        // 由于 Handle ID 现在是稳定的（基于 Edge ID），这一步不会引起 Edge 重建，只会更新引用。
         setEdges(newEdges); 
     });
   }, [setNodes, setEdges]); 
@@ -372,7 +494,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         if (!res.ok) throw new Error("Fetch failed");
         
         const xml = await res.text();
-        const { entities } = parseMetadataToSchema(xml);
+        const { entities, namespace } = parseMetadataToSchema(xml);
 
         if (entities.length === 0) {
             setHasData(false);
@@ -411,9 +533,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
                         });
                     }
 
-                    if (processedPairs.has(pairKey)) {
-                        return;
-                    }
+                    if (processedPairs.has(pairKey)) return;
                     processedPairs.add(pairKey);
 
                     const sMult = nav.sourceMultiplicity || '?';
@@ -432,12 +552,13 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
           });
         });
 
-        // 2. 初始化节点 (先不带 Handles)
+        // 2. 初始化节点
         const initialNodesRaw = entities.map((e) => ({
           id: e.name,
           type: 'entity',
           data: { 
             label: e.name, 
+            namespace, // Pass namespace for details
             properties: e.properties, 
             keys: e.keys,
             navigationProperties: e.navigationProperties,
@@ -448,11 +569,12 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
         }));
 
         const getNodeDimensions = (propCount: number, navCount: number) => {
+            // Initial dimensions estimation
             const visibleProps = Math.min(propCount, 12);
             const visibleNavs = Math.min(navCount, 8);
-            const extraHeight = (navCount > 0 ? 10 : 0) + (propCount > 12 ? 20 : 0) + (navCount > 8 ? 20 : 0);
-            const height = 45 + (visibleProps * 24) + (visibleNavs * 24) + extraHeight + 50; 
-            return { width: 350, height: height };
+            const extraHeight = (navCount > 0 ? 30 : 0) + (propCount > 12 ? 20 : 0) + (navCount > 8 ? 20 : 0);
+            const height = 45 + (visibleProps * 24) + (visibleNavs * 28) + extraHeight + 30; 
+            return { width: 300, height: height };
         };
 
         // 3. ELK 布局计算
@@ -461,11 +583,10 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
           layoutOptions: {
             'elk.algorithm': 'layered',
             'elk.direction': 'RIGHT',
-            'elk.spacing.nodeNode': '150', 
-            'elk.layered.spacing.nodeNodeBetweenLayers': '300',
+            'elk.spacing.nodeNode': '100', 
+            'elk.layered.spacing.nodeNodeBetweenLayers': '250',
             'elk.edgeRouting': 'SPLINES', 
             'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-            'elk.spacing.componentComponent': '200',
           },
           children: initialNodesRaw.map(n => ({ 
               id: n.id, 
@@ -482,8 +603,8 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
           return {
             ...node,
             position: { x: elkNode?.x || 0, y: elkNode?.y || 0 },
-            width: 220, 
-            height: elkNode?.height ? elkNode.height - 30 : 200
+            width: 250, 
+            height: elkNode?.height || 200
           };
         });
 
@@ -491,8 +612,8 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
             id: e.id,
             source: e.source,
             target: e.target,
-            sourceHandle: undefined, // 待计算
-            targetHandle: undefined, // 待计算
+            sourceHandle: undefined, 
+            targetHandle: undefined, 
             type: 'smoothstep', 
             pathOptions: { borderRadius: 20 },
             markerStart: { type: MarkerType.ArrowClosed, color: e.color },
@@ -505,7 +626,6 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
             data: { originalColor: e.color }
         }));
 
-        // 4. --- 核心优化：调用统一的布局计算函数 ---
         const { nodes: finalNodes, edges: finalEdges } = calculateDynamicLayout(preCalcNodes, preCalcEdges);
 
         setNodes(finalNodes);
@@ -524,24 +644,17 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
 
   // 处理节点点击事件：多选/反选逻辑
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    // 阻止事件冒泡，防止触发背景点击
     event.stopPropagation();
-
     const isCtrlPressed = event.ctrlKey || event.metaKey;
-    const currentEdges = edgesRef.current; // 使用 ref 确保获取最新边数据
+    const currentEdges = edgesRef.current; 
 
     setHighlightedIds((prev) => {
-        // 如果是按住 Ctrl，则在原有基础上修改（复制一份 Set）
-        // 如果没有按住 Ctrl，则创建一个新的 Set（重置选择）
         const next = new Set(isCtrlPressed ? prev : []);
 
         if (isCtrlPressed && prev.has(node.id)) {
-            // Case: Ctrl + 点击已高亮的节点 -> 仅移除该节点（变暗），不影响其他节点
             next.delete(node.id);
         } else {
-            // Case: 普通点击 OR Ctrl + 点击未高亮的节点 -> 添加该节点及其邻居
             next.add(node.id);
-            // 查找所有与该节点直接相连的节点
             currentEdges.forEach(edge => {
                 if (edge.source === node.id) next.add(edge.target);
                 if (edge.target === node.id) next.add(edge.source);
@@ -558,7 +671,6 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
 
   // 监听 highlightedIds 变化，批量更新节点和边的样式
   useEffect(() => {
-      // 1. 如果没有高亮节点，则全部恢复默认显示
       if (highlightedIds.size === 0) {
           setNodes((nds) => nds.map(n => ({
               ...n,
@@ -577,7 +689,6 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
           return;
       }
 
-      // 2. 有高亮节点时，应用样式
       setNodes((nds) => nds.map((n) => {
           const isHighlighted = highlightedIds.has(n.id);
           return {
@@ -592,7 +703,6 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
       }));
 
       setEdges((eds) => eds.map(e => {
-          // 只有当源节点和目标节点都在高亮集合中时，边才高亮
           const isVisible = highlightedIds.has(e.source) && highlightedIds.has(e.target);
           const color = isVisible ? (e.data?.originalColor || '#0070f3') : '#999';
           
@@ -603,7 +713,7 @@ const ODataERDiagram: React.FC<Props> = ({ url }) => {
                   ...e.style, 
                   stroke: color,
                   strokeWidth: isVisible ? 2.5 : 1,
-                  opacity: isVisible ? 1 : 0.05, // 稍微降低未选中边的透明度以突出主体
+                  opacity: isVisible ? 1 : 0.05, 
                   zIndex: isVisible ? 10 : 0
               },
               markerStart: { type: MarkerType.ArrowClosed, color: color },
