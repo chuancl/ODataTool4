@@ -35,6 +35,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   }, [isExpanded, id, updateNodeInternals]);
 
   // 处理导航跳转 - 核心逻辑：Fit View + Optional Context Switch
+  // shouldOpenPopover: true = 跳转并打开新表格(关闭旧的); false = 仅跳转视角
   const handleJumpToEntity = useCallback((targetEntityName: string, shouldOpenPopover: boolean = false) => {
     if (!targetEntityName) return;
     const safeTargetName = targetEntityName.trim();
@@ -50,7 +51,8 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
 
     if (targetNode) {
       const targetId = targetNode.id;
-      
+      console.log(`[EntityNode] Jumping to: ${targetId} (Popover: ${shouldOpenPopover})`);
+
       // 1. Zoom to node (移动视角)
       fitView({
         nodes: [{ id: targetId }],
@@ -58,11 +60,15 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         duration: 800,
       });
       
-      // 2. Switch active entity ONLY if requested
+      // 2. Switch active entity ONLY if requested (e.g. from inside the table)
+      // 从卡片底部导航点击时，shouldOpenPopover 为 false，仅移动视角
+      // 从Pop表格内点击时，shouldOpenPopover 为 true，执行切换逻辑
       if (shouldOpenPopover) {
         switchActiveEntity(id, targetId);
       }
-    } 
+    } else {
+        console.warn(`[EntityNode] Target entity not found: "${safeTargetName}"`);
+    }
   }, [getNodes, fitView, switchActiveEntity, id]);
 
   // Export CSV Function
@@ -109,66 +115,13 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const visibleProperties = isExpanded ? data.properties : data.properties.slice(0, 12);
   const hiddenCount = data.properties.length - 12;
 
-  // HANDLE STYLES
-  // Large hit areas. Source is pushed slightly out, Target is slightly in/centered.
-  const handleThickness = '24px'; // Very thick for easy grabbing
-  const sourceOffset = '-16px';   // Push out
-  const targetOffset = '-8px';    // Center on border
-
-  // Common styles
-  const commonHandleStyle: React.CSSProperties = {
-      background: 'transparent',
-      border: 'none',
-      borderRadius: 0,
-  };
-
   return (
     // Root Wrapper: Manages Z-Index. 
+    // If details are shown, set a very high z-index (2000) so the absolute table overlays other nodes.
     <div 
         className="relative group" 
         style={{ zIndex: showEntityDetails ? 2000 : undefined }}
     >
-      {/* --- SOURCE Handles (Drag Out) - Outer Layer --- */}
-      <Handle id="static-top" type="source" position={Position.Top} 
-              style={{ ...commonHandleStyle, top: sourceOffset, left: 0, width: '100%', height: handleThickness, zIndex: 50 }} />
-      <Handle id="static-right" type="source" position={Position.Right} 
-              style={{ ...commonHandleStyle, right: sourceOffset, top: 0, height: '100%', width: handleThickness, zIndex: 50 }} />
-      <Handle id="static-bottom" type="source" position={Position.Bottom} 
-              style={{ ...commonHandleStyle, bottom: sourceOffset, left: 0, width: '100%', height: handleThickness, zIndex: 50 }} />
-      <Handle id="static-left" type="source" position={Position.Left} 
-              style={{ ...commonHandleStyle, left: sourceOffset, top: 0, height: '100%', width: handleThickness, zIndex: 50 }} />
-
-      {/* --- TARGET Handles (Drop In) - Inner Layer --- */}
-      <Handle id="static-top-t" type="target" position={Position.Top} 
-              style={{ ...commonHandleStyle, top: targetOffset, left: 0, width: '100%', height: handleThickness, zIndex: 49 }} />
-      <Handle id="static-right-t" type="target" position={Position.Right} 
-              style={{ ...commonHandleStyle, right: targetOffset, top: 0, height: '100%', width: handleThickness, zIndex: 49 }} />
-      <Handle id="static-bottom-t" type="target" position={Position.Bottom} 
-              style={{ ...commonHandleStyle, bottom: targetOffset, left: 0, width: '100%', height: handleThickness, zIndex: 49 }} />
-      <Handle id="static-left-t" type="target" position={Position.Left} 
-              style={{ ...commonHandleStyle, left: targetOffset, top: 0, height: '100%', width: handleThickness, zIndex: 49 }} />
-
-      {/* --- Dynamic Handles (Fallback) --- */}
-      {dynamicHandles.map((handle) => {
-        const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
-        const style: React.CSSProperties = {
-          position: 'absolute',
-          [isVertical ? 'left' : 'top']: `${handle.offset}%`,
-          opacity: 0, 
-          width: '1px', height: '1px',
-          zIndex: 5,
-          background: 'transparent',
-          pointerEvents: 'none'
-        };
-
-        if (handle.position === Position.Top) style.top = '-4px';
-        if (handle.position === Position.Bottom) style.bottom = '-4px';
-        if (handle.position === Position.Left) style.left = '-4px';
-        if (handle.position === Position.Right) style.right = '-4px';
-
-        return <Handle key={handle.id} id={handle.id} type={handle.type} position={handle.position} style={style} />;
-      })}
-
       {/* --- Main Node Card --- */}
       <div 
         className={`
@@ -176,14 +129,37 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
           border-2 rounded-lg min-w-[240px] max-w-[300px] bg-content1 transition-all
           ${selected ? 'border-primary shadow-2xl ring-2 ring-primary/30' : 'border-divider shadow-sm'}
         `}
+        // REMOVED: onMouseDown={() => addActiveEntity(id)} 
+        // We only want explicit clicks on the name to trigger the table, or clicking the table itself.
       >
+        
+        {dynamicHandles.map((handle) => {
+          const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
+          const style: React.CSSProperties = {
+            position: 'absolute',
+            [isVertical ? 'left' : 'top']: `${handle.offset}%`,
+            opacity: 0, 
+            width: '12px', height: '12px',
+            zIndex: 10,
+          };
+
+          if (handle.position === Position.Top) style.top = '-6px';
+          if (handle.position === Position.Bottom) style.bottom = '-6px';
+          if (handle.position === Position.Left) style.left = '-6px';
+          if (handle.position === Position.Right) style.right = '-6px';
+
+          return <Handle key={handle.id} id={handle.id} type={handle.type} position={handle.position} style={style} />;
+        })}
+
         {/* --- Entity Title Header --- */}
         <div 
             className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md flex items-center justify-center gap-2 group transition-colors"
+            // REMOVED: onClick handler from the container div
         >
           <Table2 size={14} />
           <span 
               className="hover:underline underline-offset-2 decoration-primary/50 cursor-pointer"
+              // ADDED: onClick handler strictly on the Name text
               onClick={(e) => { e.stopPropagation(); addActiveEntity(id); }}
           >
              {data.label}
@@ -385,8 +361,13 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
       </div>
 
       {/* --- ATTACHED DETAILS TABLE (Replacing Popover) --- */}
+      {/* This renders INSIDE the node container, moving with it, but positioned absolutely to the right. */}
       {showEntityDetails && (
         <div 
+            // Important: 'nodrag' prevents ReactFlow from dragging the node when interacting with the table.
+            // 'nowheel' prevents the canvas from zooming when scrolling the table.
+            // onMouseDown: Trigger 'addActiveEntity' to bring node to front. NO STOP PROPAGATION.
+            // onClick: Stop propagation to prevent 'onNodeClick' (highlighting logic).
             className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in nodrag nowheel"
             onMouseDown={() => addActiveEntity(id)}
             onClick={(e) => e.stopPropagation()}
@@ -416,6 +397,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             keys={data.keys} 
                             getFkInfo={getForeignKeyInfo}
                             onJumpToEntity={(name) => {
+                                // Link inside Table -> Jump AND Open Popover (Close current, open target)
                                 handleJumpToEntity(name, true);
                             }}
                             onFocus={() => addActiveEntity(id)} 
