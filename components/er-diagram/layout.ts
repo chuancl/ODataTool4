@@ -14,7 +14,7 @@ export interface DynamicHandleConfig {
 // --------------------------------------------------------
 // Helper: Calculate Dynamic Layout (Handles & Edges)
 // --------------------------------------------------------
-export const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
+export const calculateDynamicLayout = (nodes: Node[], edges: Edge[], pinnedEdgeIds: Set<string> = new Set()) => {
   // Deep copy nodes to avoid mutating state directly during calculation
   const nextNodes = nodes.map(n => ({
     ...n,
@@ -27,6 +27,9 @@ export const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
   const nodeMap = new Map(nextNodes.map(n => [n.id, n]));
 
   nextEdges.forEach(edge => {
+    // Skip layout calculation for pinned (manually adjusted) edges
+    if (pinnedEdgeIds.has(edge.id)) return;
+
     const sourceNode = nodeMap.get(edge.source);
     const targetNode = nodeMap.get(edge.target);
     if (!sourceNode || !targetNode) return;

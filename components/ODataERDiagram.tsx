@@ -7,7 +7,9 @@ import ReactFlow, {
   MarkerType,
   Edge,
   Node,
-  ReactFlowProvider
+  ReactFlowProvider,
+  Connection,
+  updateEdge
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
@@ -46,10 +48,12 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const [hasData, setHasData] = useState(false);
   const [isPerformanceMode, setIsPerformanceMode] = useState(false); // 默认关闭性能模式
   const [activeEntityIds, setActiveEntityIds] = useState<string[]>([]); // Global Active Entity IDs for Popovers
+  
+  // Track edges that have been manually adjusted by the user
+  const [pinnedEdgeIds, setPinnedEdgeIds] = useState<Set<string>>(new Set());
 
   // Context Helpers
   const addActiveEntity = useCallback((id: string) => {
-    // 逻辑修改：即使 ID 已存在，也将其移动到数组末尾（Bring to Front）
     setActiveEntityIds(prev => {
         const others = prev.filter(e => e !== id);
         return [...others, id];
@@ -61,7 +65,6 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   }, []);
 
   const switchActiveEntity = useCallback((fromId: string, toId: string) => {
-    // 逻辑修改：移除旧ID，移除可能已存在的对应新ID，将新ID加到末尾（Bring to Front）
     setActiveEntityIds(prev => {
         const others = prev.filter(e => e !== fromId && e !== toId);
         return [...others, toId];
@@ -74,14 +77,17 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   // Refs for stable state access during callbacks
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const pinnedEdgesRef = useRef(pinnedEdgeIds);
   
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
+  useEffect(() => { pinnedEdgesRef.current = pinnedEdgeIds; }, [pinnedEdgeIds]);
 
   // 提取布局更新逻辑
   const performLayoutUpdate = useCallback((draggedNodes: Node[] = []) => {
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
+      const currentPinned = pinnedEdgesRef.current;
       
       const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
       const mergedNodes = currentNodes.map(n => {
@@ -92,23 +98,42 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           return n;
       });
 
-      const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
+      // Pass pinnedEdgeIds to layout calculation to skip re-routing them
+      const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges, currentPinned);
       setNodes(newNodes);
       setEdges(newEdges);
   }, [setNodes, setEdges]);
 
   // [REAL-TIME DRAG]
-  // 实时拖动处理：如果开启性能模式，则跳过计算，仅由 ReactFlow 处理节点位移
   const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
     if (isPerformanceMode) return; 
     performLayoutUpdate(draggedNodes);
   }, [isPerformanceMode, performLayoutUpdate]); 
 
   // [DRAG STOP]
-  // 拖动结束：强制进行一次完整布局计算，确保连线和端口位置正确（尤其是在性能模式下）
   const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
       performLayoutUpdate(draggedNodes);
   }, [performLayoutUpdate]);
+
+  // [EDGE UPDATE] - Handle manual edge dragging/reconnection
+  const onEdgeUpdate = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    setEdges((els) => {
+        const newEdges = updateEdge(oldEdge, newConnection, els);
+        return newEdges;
+    });
+
+    // Mark this edge as pinned so auto-layout doesn't override it
+    setPinnedEdgeIds(prev => {
+        const next = new Set(prev);
+        next.add(oldEdge.id);
+        return next;
+    });
+
+    // Force a re-render/layout update to ensure handles are correct, 
+    // but the layout engine will ignore this pinned edge.
+    // We use setTimeout to allow state to settle.
+    setTimeout(() => performLayoutUpdate(), 0);
+  }, [performLayoutUpdate, setEdges]);
 
   useEffect(() => {
     if (!url) return;
@@ -246,9 +271,10 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
             markerStart: { type: MarkerType.ArrowClosed, color: e.color },
             markerEnd: { type: MarkerType.ArrowClosed, color: e.color },
             animated: false,
-            // UPDATED: strokeWidth 2, interactionWidth 20
-            style: { stroke: e.color, strokeWidth: 2, opacity: 0.8 },
+            // UPDATED: strokeWidth 3 (Default), interactionWidth 20, updatable true
+            style: { stroke: e.color, strokeWidth: 3, opacity: 0.8 },
             interactionWidth: 20,
+            updatable: true, // Allow manual adjustments
             label: e.label,
             labelStyle: { fill: e.color, fontWeight: 700, fontSize: 10 },
             labelBgStyle: { fill: '#ffffff', fillOpacity: 0.7, rx: 4, ry: 4 },
@@ -296,7 +322,6 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   // 监听 background 点击，重置视图
   const onPaneClick = useCallback(() => {
       setHighlightedIds(new Set());
-      // Do NOT clear active popovers per requirement (only close on X or Jump)
   }, []);
 
   // 监听 highlightedIds 变化，批量更新节点和边的样式
@@ -309,8 +334,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           setEdges((eds) => eds.map(e => ({
               ...e, 
               animated: false, 
-              // UPDATED: strokeWidth 2
-              style: { stroke: e.data?.originalColor, strokeWidth: 2, opacity: 0.8 }, 
+              // UPDATED: strokeWidth 3
+              style: { stroke: e.data?.originalColor, strokeWidth: 3, opacity: 0.8 }, 
               markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               labelStyle: { ...e.labelStyle, fill: e.data?.originalColor, opacity: 1 },
@@ -343,8 +368,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
               style: { 
                   ...e.style, 
                   stroke: color,
-                  // UPDATED: strokeWidth 4 for highlighted
-                  strokeWidth: isVisible ? 4 : 1,
+                  // UPDATED: strokeWidth 6 for highlighted
+                  strokeWidth: isVisible ? 6 : 1,
                   opacity: isVisible ? 1 : 0.05, 
                   zIndex: isVisible ? 10 : 0
               },
@@ -356,18 +381,11 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
       }));
   }, [highlightedIds, setNodes, setEdges]);
 
-  // 监听 activeEntityIds 变化，提升选中节点的层级 (Z-Index)，防止 Popover 被遮挡
+  // 监听 activeEntityIds 变化，提升选中节点的层级 (Z-Index)
   useEffect(() => {
     setNodes((nds) => nds.map(n => {
         const activeIndex = activeEntityIds.indexOf(n.id);
-        
-        // Dynamic Z-Index Strategy:
-        // - Inactive nodes: 0
-        // - Active nodes: 1000 + index in active array.
-        // This ensures the most recently interacted entity (last in array) is always on top.
         const targetZIndex = activeIndex !== -1 ? 1000 + activeIndex : 0;
-        
-        // Only update if changed to avoid unnecessary re-renders
         if (n.zIndex !== targetZIndex) {
             return { ...n, zIndex: targetZIndex };
         }
@@ -377,7 +395,9 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
   const resetView = () => {
      setHighlightedIds(new Set());
-     setActiveEntityIds([]); // Close all when manually resetting via button
+     setActiveEntityIds([]); 
+     setPinnedEdgeIds(new Set()); // Reset manual adjustments
+     setTimeout(() => performLayoutUpdate(), 50); // Recalculate full auto layout
   };
 
   return (
@@ -414,6 +434,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            onEdgeUpdate={onEdgeUpdate} // Enable manual edge drag
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
