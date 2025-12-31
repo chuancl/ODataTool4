@@ -328,7 +328,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
                     <div className="flex-1 overflow-hidden relative text-sm">
                         <CodeMirror 
                             value={rawJsonResult || '// 请先运行查询以获取结果'} 
-                            height="100%" 
+                            height="100%"
+                            className="h-full [&_.cm-scroller]:overflow-scroll"
                             extensions={[json()]} 
                             theme={editorTheme}
                             readOnly={true}
@@ -363,7 +364,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
                     <div className="flex-1 overflow-hidden relative text-sm">
                          <CodeMirror 
                             value={rawXmlResult || '// 请先运行查询以获取结果'} 
-                            height="100%" 
+                            height="100%"
+                            className="h-full [&_.cm-scroller]:overflow-scroll"
                             extensions={[xml()]} 
                             theme={editorTheme}
                             readOnly={true}
