@@ -6,7 +6,7 @@ import {
 } from "@nextui-org/react";
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 import { generateSAPUI5Code, ODataVersion, ParsedSchema, EntityType } from '@/utils/odata-helper';
-import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download, CheckSquare } from 'lucide-react';
+import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download, CheckSquare, ArrowDownAz, ArrowUpZa } from 'lucide-react';
 
 // Code Mirror & Formatting Imports
 import CodeMirror from '@uiw/react-codemirror';
@@ -31,6 +31,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const [filter, setFilter] = useState('');
   const [select, setSelect] = useState('');
   const [expand, setExpand] = useState('');
+  const [sortField, setSortField] = useState('');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [top, setTop] = useState('20');
   const [skip, setSkip] = useState('0');
   const [count, setCount] = useState(false);
@@ -133,6 +135,13 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     }
   };
 
+  // --- Sort 字段下拉列表 (复用 schema properties) ---
+  const sortItems = useMemo(() => {
+    if (!currentSchema) return [];
+    return currentSchema.properties.map(p => ({ ...p, label: p.name }));
+  }, [currentSchema]);
+
+
   // --- Expand 字段下拉列表逻辑 ---
   const expandItems = useMemo(() => {
     if (!currentSchema) return [];
@@ -195,6 +204,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     if (filter) params.append('$filter', filter);
     if (select) params.append('$select', select);
     if (expand) params.append('$expand', expand);
+    if (sortField) params.append('$orderby', `${sortField} ${sortOrder}`);
     if (top) params.append('$top', top);
     if (skip) params.append('$skip', skip);
     if (count) {
@@ -205,7 +215,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     const queryString = params.toString();
     const displayQuery = queryString ? `?${decodeURIComponent(queryString)}` : '';
     setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
-  }, [url, selectedEntity, filter, select, expand, top, skip, count, version]);
+  }, [url, selectedEntity, filter, select, expand, sortField, sortOrder, top, skip, count, version]);
 
   // 3. 执行查询
   const executeQuery = async () => {
@@ -268,7 +278,9 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const copyReadCode = () => {
     const code = generateSAPUI5Code('read', selectedEntity, {
       filters: filter ? [{field: 'Manual', operator: 'EQ', value: filter}] : [], 
-      expand, select, top, skip, inlinecount: count
+      expand, select, 
+      orderby: sortField ? `${sortField} ${sortOrder}` : undefined,
+      top, skip, inlinecount: count
     }, version);
     navigator.clipboard.writeText(code);
     alert("SAPUI5 Read 代码已复制!");
@@ -288,6 +300,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     setSelect('');
     setExpand('');
     setFilter('');
+    setSortField('');
+    setSortOrder('asc');
   };
 
   const downloadFile = (content: string, filename: string, type: 'json' | 'xml') => {
@@ -339,87 +353,130 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
         <div className="md:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-4">
           <Input label="过滤 ($filter)" placeholder="例如: Price gt 20" value={filter} onValueChange={setFilter} size="sm" variant="bordered" />
           
-          {/* 智能 Select 字段选择 */}
-          {currentSchema ? (
-             <Select
-                label="字段 ($select)"
-                placeholder="选择返回字段"
-                selectionMode="multiple"
-                selectedKeys={currentSelectKeys}
-                onSelectionChange={handleSelectChange}
-                size="sm"
-                variant="bordered"
-                classNames={{ value: "text-xs" }}
-                items={selectItems}
-             >
-                {(item) => {
-                    if (item.type === 'Special') {
-                        return (
-                            <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
-                                <div className="flex items-center gap-2">
-                                    <CheckSquare size={14} /> {item.label}
-                                </div>
+          {/* 排序 ($orderby) */}
+          <div className="flex gap-1 items-end">
+            <div className="flex-1">
+                {currentSchema ? (
+                    <Select
+                        label="排序 ($orderby)"
+                        placeholder="字段"
+                        selectedKeys={sortField ? [sortField] : []}
+                        onSelectionChange={(k) => setSortField(Array.from(k).join(''))}
+                        size="sm"
+                        variant="bordered"
+                        classNames={{ value: "text-xs" }}
+                        items={sortItems}
+                    >
+                        {(p) => (
+                            <SelectItem key={p.name} value={p.name} textValue={p.name}>
+                                {p.name}
                             </SelectItem>
-                        );
-                    }
-                    return (
-                        <SelectItem key={item.name} value={item.name} textValue={item.name}>
-                            <div className="flex flex-col">
-                                <span className="text-small">{item.name}</span>
-                                <span className="text-tiny text-default-400">{item.type.split('.').pop()}</span>
-                            </div>
-                        </SelectItem>
-                    );
-                }}
-             </Select>
-          ) : (
-             <Input label="字段 ($select)" placeholder="例如: Name,Price" value={select} onValueChange={setSelect} size="sm" variant="bordered" />
-          )}
-
-          {/* 智能 Expand 展开选择 */}
-          {currentSchema ? (
-             <Select
-                label="展开 ($expand)"
-                placeholder="选择关联实体"
-                selectionMode="multiple"
-                selectedKeys={currentExpandKeys}
-                onSelectionChange={handleExpandChange}
-                size="sm"
-                variant="bordered"
-                classNames={{ value: "text-xs" }}
-                items={expandItems}
-             >
-                 {(item) => {
-                     if (item.type === 'Special') {
-                         return (
-                            <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
-                                <div className="flex items-center gap-2">
-                                    <CheckSquare size={14} /> {item.label}
-                                </div>
-                            </SelectItem>
-                         );
-                     }
-                     if (item.type === 'placeholder') {
-                         return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
-                     }
-                     return (
-                        <SelectItem key={item.name} value={item.name} textValue={item.name}>
-                            <div className="flex flex-col">
-                                <span className="text-small">{item.name}</span>
-                                <span className="text-tiny text-default-400">To: {item.targetType?.split('.').pop()}</span>
-                            </div>
-                        </SelectItem>
-                     );
-                 }}
-             </Select>
-          ) : (
-             <Input label="展开 ($expand)" placeholder="例如: Category" value={expand} onValueChange={setExpand} size="sm" variant="bordered" />
-          )}
+                        )}
+                    </Select>
+                ) : (
+                    <Input label="排序 ($orderby)" placeholder="字段" value={sortField} onValueChange={setSortField} size="sm" variant="bordered" />
+                )}
+            </div>
+            <Button 
+                isIconOnly 
+                size="sm" 
+                variant="flat" 
+                color={sortOrder === 'asc' ? 'default' : 'secondary'}
+                onPress={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                title={sortOrder === 'asc' ? '升序 (Ascending)' : '降序 (Descending)'}
+                className="mb-0.5"
+            >
+                {sortOrder === 'asc' ? <ArrowDownAz size={18} /> : <ArrowUpZa size={18} />}
+            </Button>
+          </div>
 
           <div className="flex gap-2 items-center">
              <Input label="Top" value={top} onValueChange={setTop} size="sm" variant="bordered" className="w-16" />
              <Input label="Skip" value={skip} onValueChange={setSkip} size="sm" variant="bordered" className="w-16" />
              <Checkbox isSelected={count} onValueChange={setCount} size="sm">计数</Checkbox>
+          </div>
+          
+          <div className="hidden md:block"></div> {/* Spacer to fill grid */}
+
+          {/* 智能 Select 字段选择 (Span 2) */}
+          <div className="md:col-span-2">
+            {currentSchema ? (
+                <Select
+                    label="字段 ($select)"
+                    placeholder="选择返回字段"
+                    selectionMode="multiple"
+                    selectedKeys={currentSelectKeys}
+                    onSelectionChange={handleSelectChange}
+                    size="sm"
+                    variant="bordered"
+                    classNames={{ value: "text-xs" }}
+                    items={selectItems}
+                >
+                    {(item) => {
+                        if (item.type === 'Special') {
+                            return (
+                                <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
+                                    <div className="flex items-center gap-2">
+                                        <CheckSquare size={14} /> {item.label}
+                                    </div>
+                                </SelectItem>
+                            );
+                        }
+                        return (
+                            <SelectItem key={item.name} value={item.name} textValue={item.name}>
+                                <div className="flex flex-col">
+                                    <span className="text-small">{item.name}</span>
+                                    <span className="text-tiny text-default-400">{item.type.split('.').pop()}</span>
+                                </div>
+                            </SelectItem>
+                        );
+                    }}
+                </Select>
+            ) : (
+                <Input label="字段 ($select)" placeholder="例如: Name,Price" value={select} onValueChange={setSelect} size="sm" variant="bordered" />
+            )}
+          </div>
+
+          {/* 智能 Expand 展开选择 (Span 2) */}
+          <div className="md:col-span-2">
+            {currentSchema ? (
+                <Select
+                    label="展开 ($expand)"
+                    placeholder="选择关联实体"
+                    selectionMode="multiple"
+                    selectedKeys={currentExpandKeys}
+                    onSelectionChange={handleExpandChange}
+                    size="sm"
+                    variant="bordered"
+                    classNames={{ value: "text-xs" }}
+                    items={expandItems}
+                >
+                    {(item) => {
+                        if (item.type === 'Special') {
+                            return (
+                                <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
+                                    <div className="flex items-center gap-2">
+                                        <CheckSquare size={14} /> {item.label}
+                                    </div>
+                                </SelectItem>
+                            );
+                        }
+                        if (item.type === 'placeholder') {
+                            return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
+                        }
+                        return (
+                            <SelectItem key={item.name} value={item.name} textValue={item.name}>
+                                <div className="flex flex-col">
+                                    <span className="text-small">{item.name}</span>
+                                    <span className="text-tiny text-default-400">To: {item.targetType?.split('.').pop()}</span>
+                                </div>
+                            </SelectItem>
+                        );
+                    }}
+                </Select>
+            ) : (
+                <Input label="展开 ($expand)" placeholder="例如: Category" value={expand} onValueChange={setExpand} size="sm" variant="bordered" />
+            )}
           </div>
         </div>
       </div>

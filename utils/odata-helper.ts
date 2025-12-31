@@ -264,6 +264,7 @@ export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
         const urlParams: any = {};
         if (p.expand) urlParams.$expand = p.expand;
         if (p.select) urlParams.$select = p.select;
+        if (p.orderby) urlParams.$orderby = p.orderby;
         if (p.top) urlParams.$top = p.top;
         if (p.skip) urlParams.$skip = p.skip;
         if (p.inlinecount) urlParams.$inlinecount = 'allpages';
