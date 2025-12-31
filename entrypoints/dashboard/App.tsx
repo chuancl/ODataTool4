@@ -124,7 +124,7 @@ const App: React.FC = () => {
                 </Tab>
                 <Tab key="query" title={<div className="flex items-center gap-2"><span>Query Builder</span></div>}>
                   <div className="h-full w-full p-0">
-                    <QueryBuilder url={url} version={odataVersion} />
+                    <QueryBuilder url={url} version={odataVersion} isDark={isDark} />
                   </div>
                 </Tab>
                 <Tab key="mock" title={<div className="flex items-center gap-2"><span>Mock Data</span></div>}>

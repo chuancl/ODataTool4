@@ -2,18 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { 
   Input, Button, Select, SelectItem, Checkbox, 
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  ScrollShadow, Selection, Chip, Tabs, Tab, Card, CardBody
+  Selection, Chip, Tabs, Tab
 } from "@nextui-org/react";
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 import { generateSAPUI5Code, ODataVersion } from '@/utils/odata-helper';
-import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, FileJson } from 'lucide-react';
+import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces } from 'lucide-react';
+
+// Code Mirror & Formatting Imports
+import CodeMirror from '@uiw/react-codemirror';
+import { json } from '@codemirror/lang-json';
+import { xml } from '@codemirror/lang-xml';
+import { vscodeDark } from '@uiw/codemirror-theme-vscode';
+import { githubLight } from '@uiw/codemirror-theme-github';
+import xmlFormat from 'xml-formatter';
 
 interface Props {
   url: string;
   version: ODataVersion;
+  isDark: boolean;
 }
 
-const QueryBuilder: React.FC<Props> = ({ url, version }) => {
+const QueryBuilder: React.FC<Props> = ({ url, version, isDark }) => {
   const [entitySets, setEntitySets] = useState<string[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<string>('');
   
@@ -88,8 +97,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
   // 3. 执行查询：同时获取 JSON 和 XML
   const executeQuery = async () => {
     setLoading(true);
-    setRawXmlResult('Loading XML...');
-    setRawJsonResult('Loading JSON...');
+    setRawXmlResult('// Loading XML...');
+    setRawJsonResult('// Loading JSON...');
     setQueryResult([]);
 
     try {
@@ -109,24 +118,34 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
           setQueryResult(results);
           setRawJsonResult(JSON.stringify(data, null, 2));
         } catch (e) {
-          setRawJsonResult(`JSON 解析失败: ${text}`);
+          setRawJsonResult(`// JSON 解析失败: \n${text}`);
         }
       } else {
         const errorMsg = jsonRes.status === 'fulfilled' 
-          ? `HTTP Error: ${jsonRes.value.status} ${jsonRes.value.statusText}` 
-          : `Request Failed: ${jsonRes.reason}`;
+          ? `// HTTP Error: ${jsonRes.value.status} ${jsonRes.value.statusText}` 
+          : `// Request Failed: ${jsonRes.reason}`;
         setRawJsonResult(errorMsg);
       }
 
       // 处理 XML 响应
       if (xmlRes.status === 'fulfilled' && xmlRes.value.ok) {
         const text = await xmlRes.value.text();
-        // 简单格式化 XML (缩进)
-        setRawXmlResult(formatXml(text));
+        // 使用 xml-formatter 进行美化，并允许折叠内容
+        try {
+            const formatted = xmlFormat(text, { 
+                indentation: '  ', 
+                filter: (node) => node.type !== 'Comment', 
+                collapseContent: true, 
+                lineSeparator: '\n' 
+            });
+            setRawXmlResult(formatted);
+        } catch (err) {
+            setRawXmlResult(text); // Fallback to raw if formatter fails
+        }
       } else {
         const errorMsg = xmlRes.status === 'fulfilled'
-          ? `HTTP Error: ${xmlRes.value.status} (该服务可能不支持 XML 格式)`
-          : `Request Failed: ${xmlRes.reason}`;
+          ? `<!-- HTTP Error: ${xmlRes.value.status} (该服务可能不支持 XML 格式) -->`
+          : `<!-- Request Failed: ${xmlRes.reason} -->`;
         setRawXmlResult(errorMsg);
       }
 
@@ -136,31 +155,6 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
     } finally {
       setLoading(false);
     }
-  };
-
-  // 辅助函数：简单的 XML 格式化
-  const formatXml = (xml: string) => {
-    let formatted = '';
-    let reg = /(>)(<)(\/*)/g;
-    xml = xml.replace(reg, '$1\r\n$2$3');
-    let pad = 0;
-    xml.split('\r\n').forEach((node) => {
-        let indent = 0;
-        if (node.match(/.+<\/\w[^>]*>$/)) {
-            indent = 0;
-        } else if (node.match(/^<\/\w/)) {
-            if (pad !== 0) pad -= 1;
-        } else if (node.match(/^<\w[^>]*[^\/]>.*$/)) {
-            indent = 1;
-        } else {
-            indent = 0;
-        }
-        let padding = '';
-        for (let i = 0; i < pad; i++) padding += '  ';
-        formatted += padding + node + '\r\n';
-        pad += indent;
-    });
-    return formatted;
   };
 
   const copyReadCode = () => {
@@ -197,6 +191,9 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  // 编辑器主题配置
+  const editorTheme = isDark ? vscodeDark : githubLight;
 
   return (
     <div className="flex flex-col gap-4 h-full">
@@ -255,7 +252,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
                 cursor: "w-full bg-primary",
                 tab: "max-w-fit px-2 h-10 text-sm",
                 tabContent: "group-data-[selected=true]:font-bold",
-                panel: "flex-1 p-0 overflow-hidden" 
+                panel: "flex-1 p-0 overflow-hidden h-full flex flex-col" 
             }}
         >
             {/* Tab 1: 表格预览 */}
@@ -311,7 +308,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
                 </div>
             </Tab>
 
-            {/* Tab 2: JSON 预览 */}
+            {/* Tab 2: JSON 预览 (CodeMirror) */}
             <Tab
                 key="json"
                 title={
@@ -321,20 +318,32 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
                     </div>
                 }
             >
-                <div className="h-full flex flex-col bg-[#1e1e1e] text-default-200">
-                    <div className="p-2 border-b border-white/10 flex justify-between items-center shrink-0 bg-[#252526]">
-                        <span className="text-xs font-bold px-2 text-yellow-500">JSON Response</span>
-                        <Button isIconOnly size="sm" variant="light" className="text-white/70 hover:text-white" onPress={() => navigator.clipboard.writeText(rawJsonResult)}>
+                <div className="h-full flex flex-col">
+                    <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
+                        <span className="text-xs font-bold px-2 text-warning-500">JSON Response</span>
+                        <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawJsonResult)}>
                             <Copy size={14} />
                         </Button>
                     </div>
-                    <ScrollShadow className="flex-1 p-4">
-                        <pre className="text-xs font-mono whitespace-pre leading-relaxed">{rawJsonResult || '// 请先运行查询以获取结果'}</pre>
-                    </ScrollShadow>
+                    <div className="flex-1 overflow-hidden relative text-sm">
+                        <CodeMirror 
+                            value={rawJsonResult || '// 请先运行查询以获取结果'} 
+                            height="100%" 
+                            extensions={[json()]} 
+                            theme={editorTheme}
+                            readOnly={true}
+                            editable={false}
+                            basicSetup={{
+                                lineNumbers: true,
+                                foldGutter: true, 
+                                highlightActiveLine: false
+                            }}
+                        />
+                    </div>
                 </div>
             </Tab>
 
-             {/* Tab 3: XML 预览 */}
+             {/* Tab 3: XML 预览 (CodeMirror) */}
              <Tab
                 key="xml"
                 title={
@@ -344,16 +353,28 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
                     </div>
                 }
             >
-                <div className="h-full flex flex-col bg-[#1e1e1e] text-default-200">
-                    <div className="p-2 border-b border-white/10 flex justify-between items-center shrink-0 bg-[#252526]">
-                        <span className="text-xs font-bold px-2 text-blue-400">XML / Atom Response</span>
-                        <Button isIconOnly size="sm" variant="light" className="text-white/70 hover:text-white" onPress={() => navigator.clipboard.writeText(rawXmlResult)}>
+                <div className="h-full flex flex-col">
+                    <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
+                        <span className="text-xs font-bold px-2 text-primary-500">XML / Atom Response</span>
+                        <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawXmlResult)}>
                             <Copy size={14} />
                         </Button>
                     </div>
-                    <ScrollShadow className="flex-1 p-4">
-                        <pre className="text-xs font-mono whitespace-pre leading-relaxed text-blue-200">{rawXmlResult || '// 请先运行查询以获取结果'}</pre>
-                    </ScrollShadow>
+                    <div className="flex-1 overflow-hidden relative text-sm">
+                         <CodeMirror 
+                            value={rawXmlResult || '// 请先运行查询以获取结果'} 
+                            height="100%" 
+                            extensions={[xml()]} 
+                            theme={editorTheme}
+                            readOnly={true}
+                            editable={false}
+                            basicSetup={{
+                                lineNumbers: true,
+                                foldGutter: true,
+                                highlightActiveLine: false
+                            }}
+                        />
+                    </div>
                 </div>
             </Tab>
         </Tabs>
@@ -369,8 +390,15 @@ const QueryBuilder: React.FC<Props> = ({ url, version }) => {
                 SAPUI5 {modalAction === 'delete' ? '删除(Delete)' : '更新(Update)'} 代码
               </ModalHeader>
               <ModalBody>
-                <div className="bg-[#1e1e1e] p-4 rounded-lg text-white font-mono text-sm overflow-auto max-h-[400px]">
-                  <pre>{codePreview}</pre>
+                <div className="bg-[#1e1e1e] rounded-lg overflow-hidden border border-white/10">
+                   <CodeMirror 
+                        value={codePreview} 
+                        height="400px" 
+                        extensions={[json()]} 
+                        theme={vscodeDark}
+                        readOnly={true}
+                        editable={false}
+                   />
                 </div>
               </ModalBody>
               <ModalFooter>
