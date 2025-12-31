@@ -1,0 +1,14 @@
+{
+  "name": "OData Master DevTools",
+  "description": "A professional OData V2/V3/V4 visualizer, query builder, and code generator for Chrome.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "requestFramePermissions": []
+}
