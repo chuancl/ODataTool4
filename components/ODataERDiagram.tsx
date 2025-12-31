@@ -117,21 +117,24 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
   // [EDGE UPDATE] - Handle manual edge dragging/reconnection
   const onEdgeUpdate = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    // Determine if the drop was successful (i.e., landed on a handle)
+    // If landed on a handle, newConnection.sourceHandle/targetHandle will be set.
+    
     setEdges((els) => {
         const newEdges = updateEdge(oldEdge, newConnection, els);
         return newEdges;
     });
 
-    // Mark this edge as pinned so auto-layout doesn't override it
-    setPinnedEdgeIds(prev => {
-        const next = new Set(prev);
-        next.add(oldEdge.id);
-        return next;
-    });
+    // Only pin if we actually connected to something (handle is present)
+    if (newConnection.sourceHandle || newConnection.targetHandle) {
+        setPinnedEdgeIds(prev => {
+            const next = new Set(prev);
+            next.add(oldEdge.id);
+            return next;
+        });
+    }
 
-    // Force a re-render/layout update to ensure handles are correct, 
-    // but the layout engine will ignore this pinned edge.
-    // We use setTimeout to allow state to settle.
+    // Force a re-render/layout update
     setTimeout(() => performLayoutUpdate(), 0);
   }, [performLayoutUpdate, setEdges]);
 
@@ -271,9 +274,9 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
             markerStart: { type: MarkerType.ArrowClosed, color: e.color },
             markerEnd: { type: MarkerType.ArrowClosed, color: e.color },
             animated: false,
-            // UPDATED: strokeWidth 5 (Default), interactionWidth 30
+            // UPDATED: strokeWidth 5 (Default), interactionWidth 50 for very easy grabbing
             style: { stroke: e.color, strokeWidth: 5, opacity: 0.8 },
-            interactionWidth: 30, // Much easier to grab
+            interactionWidth: 50, // Easy to grab the edge
             updatable: true, 
             label: e.label,
             labelStyle: { fill: e.color, fontWeight: 700, fontSize: 10 },
@@ -334,7 +337,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           setEdges((eds) => eds.map(e => ({
               ...e, 
               animated: false, 
-              // UPDATED: strokeWidth 5 (Default)
+              // UPDATED: strokeWidth 5
               style: { stroke: e.data?.originalColor, strokeWidth: 5, opacity: 0.8 }, 
               markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
@@ -368,7 +371,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
               style: { 
                   ...e.style, 
                   stroke: color,
-                  // UPDATED: No extra thickness for highlight (keep 5), just higher opacity/z-index
+                  // UPDATED: strokeWidth stays 5 (no extra bolding), just active visual cues
                   strokeWidth: 5, 
                   opacity: isVisible ? 1 : 0.05, 
                   zIndex: isVisible ? 10 : 0

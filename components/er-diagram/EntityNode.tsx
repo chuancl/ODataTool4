@@ -109,11 +109,18 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const visibleProperties = isExpanded ? data.properties : data.properties.slice(0, 12);
   const hiddenCount = data.properties.length - 12;
 
-  // VISIBLE Static Handle Styles - UPDATED to be "Bars"
-  // Used opacity 0 to be invisible but interactive. 
-  // Positioned to cover the edges.
-  const barThickness = '12px';
-  const barOffset = '-6px'; // Center the 12px bar on the 0px border
+  // HANDLE STYLES
+  // Large hit areas. Source is pushed slightly out, Target is slightly in/centered.
+  const handleThickness = '24px'; // Very thick for easy grabbing
+  const sourceOffset = '-16px';   // Push out
+  const targetOffset = '-8px';    // Center on border
+
+  // Common styles
+  const commonHandleStyle: React.CSSProperties = {
+      background: 'transparent',
+      border: 'none',
+      borderRadius: 0,
+  };
 
   return (
     // Root Wrapper: Manages Z-Index. 
@@ -121,64 +128,27 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         className="relative group" 
         style={{ zIndex: showEntityDetails ? 2000 : undefined }}
     >
-      {/* --- Static Handles (Bars) for Easy Connection --- */}
-      {/* Top Bar */}
-      <Handle 
-        id="static-top" 
-        type="source" 
-        position={Position.Top} 
-        style={{ top: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
-      <Handle 
-        id="static-top-t" 
-        type="target" 
-        position={Position.Top} 
-        style={{ top: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
+      {/* --- SOURCE Handles (Drag Out) - Outer Layer --- */}
+      <Handle id="static-top" type="source" position={Position.Top} 
+              style={{ ...commonHandleStyle, top: sourceOffset, left: 0, width: '100%', height: handleThickness, zIndex: 50 }} />
+      <Handle id="static-right" type="source" position={Position.Right} 
+              style={{ ...commonHandleStyle, right: sourceOffset, top: 0, height: '100%', width: handleThickness, zIndex: 50 }} />
+      <Handle id="static-bottom" type="source" position={Position.Bottom} 
+              style={{ ...commonHandleStyle, bottom: sourceOffset, left: 0, width: '100%', height: handleThickness, zIndex: 50 }} />
+      <Handle id="static-left" type="source" position={Position.Left} 
+              style={{ ...commonHandleStyle, left: sourceOffset, top: 0, height: '100%', width: handleThickness, zIndex: 50 }} />
 
-      {/* Right Bar */}
-      <Handle 
-        id="static-right" 
-        type="source" 
-        position={Position.Right} 
-        style={{ right: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
-       <Handle 
-        id="static-right-t" 
-        type="target" 
-        position={Position.Right} 
-        style={{ right: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
+      {/* --- TARGET Handles (Drop In) - Inner Layer --- */}
+      <Handle id="static-top-t" type="target" position={Position.Top} 
+              style={{ ...commonHandleStyle, top: targetOffset, left: 0, width: '100%', height: handleThickness, zIndex: 49 }} />
+      <Handle id="static-right-t" type="target" position={Position.Right} 
+              style={{ ...commonHandleStyle, right: targetOffset, top: 0, height: '100%', width: handleThickness, zIndex: 49 }} />
+      <Handle id="static-bottom-t" type="target" position={Position.Bottom} 
+              style={{ ...commonHandleStyle, bottom: targetOffset, left: 0, width: '100%', height: handleThickness, zIndex: 49 }} />
+      <Handle id="static-left-t" type="target" position={Position.Left} 
+              style={{ ...commonHandleStyle, left: targetOffset, top: 0, height: '100%', width: handleThickness, zIndex: 49 }} />
 
-      {/* Bottom Bar */}
-      <Handle 
-        id="static-bottom" 
-        type="source" 
-        position={Position.Bottom} 
-        style={{ bottom: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
-      <Handle 
-        id="static-bottom-t" 
-        type="target" 
-        position={Position.Bottom} 
-        style={{ bottom: barOffset, left: 0, width: '100%', height: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
-
-      {/* Left Bar */}
-      <Handle 
-        id="static-left" 
-        type="source" 
-        position={Position.Left} 
-        style={{ left: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
-      <Handle 
-        id="static-left-t" 
-        type="target" 
-        position={Position.Left} 
-        style={{ left: barOffset, top: 0, height: '100%', width: barThickness, background: 'transparent', border: 'none', borderRadius: 0, zIndex: 10 }} 
-      />
-
-      {/* --- Dynamic Handles (Auto-Calculated) - Keep them as fallback for auto layout --- */}
+      {/* --- Dynamic Handles (Fallback) --- */}
       {dynamicHandles.map((handle) => {
         const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
         const style: React.CSSProperties = {
@@ -188,7 +158,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
           width: '1px', height: '1px',
           zIndex: 5,
           background: 'transparent',
-          pointerEvents: 'none' // Let static bars take precedence for interaction
+          pointerEvents: 'none'
         };
 
         if (handle.position === Position.Top) style.top = '-4px';
