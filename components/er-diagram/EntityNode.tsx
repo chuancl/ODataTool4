@@ -35,21 +35,33 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   // shouldOpenPopover: true = 跳转并打开新表格(关闭旧的); false = 仅跳转视角
   const handleJumpToEntity = useCallback((targetEntityName: string, shouldOpenPopover: boolean = false) => {
     const nodes = getNodes();
-    const targetNode = nodes.find(n => n.id === targetEntityName);
+    
+    // 1. 尝试精确匹配 ID
+    let targetNode = nodes.find(n => n.id === targetEntityName);
+    
+    // 2. 如果没找到，尝试忽略大小写匹配 (增加容错)
+    if (!targetNode) {
+        targetNode = nodes.find(n => n.id.toLowerCase() === targetEntityName.toLowerCase());
+    }
 
     if (targetNode) {
-      // 1. Zoom to node
+      const targetId = targetNode.id;
+
+      // 1. Zoom to node (移动视角)
       fitView({
-        nodes: [{ id: targetEntityName }],
+        nodes: [{ id: targetId }],
         padding: 0.5,
         duration: 800,
       });
       
       // 2. Switch active entity ONLY if requested (e.g. from inside the table)
-      // From entity card navigation, we only want to jump, not trigger the pop.
+      // 从卡片底部导航点击时，shouldOpenPopover 为 false，仅移动视角
+      // 从Pop表格内点击时，shouldOpenPopover 为 true，执行切换逻辑
       if (shouldOpenPopover) {
-        switchActiveEntity(id, targetEntityName);
+        switchActiveEntity(id, targetId);
       }
+    } else {
+        console.warn(`[EntityNode] Target entity not found: ${targetEntityName}`);
     }
   }, [getNodes, fitView, switchActiveEntity, id]);
 
@@ -355,7 +367,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                         keys={data.keys} 
                         getFkInfo={getForeignKeyInfo}
                         onJumpToEntity={(name) => {
-                            // Link inside Table -> Jump AND Open Popover
+                            // Link inside Table -> Jump AND Open Popover (Close current, open target)
                             handleJumpToEntity(name, true);
                         }}
                         />
