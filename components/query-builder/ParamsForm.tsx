@@ -1,7 +1,12 @@
 import React, { useMemo } from 'react';
-import { Input, Select, SelectItem, Checkbox, Selection, Button, ListboxSection } from "@nextui-org/react";
+import { Input, Select, SelectItem, Checkbox, Selection, Button, Chip } from "@nextui-org/react";
 import { CheckSquare, ArrowDownAz, ArrowUpZa, CornerDownRight, Link2 } from 'lucide-react';
 import { EntityType, ParsedSchema } from '@/utils/odata-helper';
+
+export interface SortItem {
+    field: string;
+    order: 'asc' | 'desc';
+}
 
 interface ParamsFormProps {
     entitySets: string[];
@@ -11,14 +16,17 @@ interface ParamsFormProps {
     filter: string; setFilter: (val: string) => void;
     select: string; setSelect: (val: string) => void;
     expand: string; setExpand: (val: string) => void;
-    sortField: string; setSortField: (val: string) => void;
-    sortOrder: 'asc' | 'desc'; setSortOrder: (val: any) => void;
+    
+    // Changed sort props to support multiple items
+    sortItems: SortItem[];
+    setSortItems: (items: SortItem[]) => void;
+
     top: string; setTop: (val: string) => void;
     skip: string; setSkip: (val: string) => void;
     count: boolean; setCount: (val: boolean) => void;
 
     currentSchema: EntityType | null;
-    schema: ParsedSchema | null; // 需要完整的 schema 来查找级联实体
+    schema: ParsedSchema | null;
 }
 
 export const ParamsForm: React.FC<ParamsFormProps> = ({
@@ -26,7 +34,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     filter, setFilter,
     select, setSelect,
     expand, setExpand,
-    sortField, setSortField, sortOrder, setSortOrder,
+    sortItems, setSortItems,
     top, setTop,
     skip, setSkip,
     count, setCount,
@@ -69,7 +77,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             }
 
             if (isValidPath && current) {
-                // 将该实体的所有属性加以前缀
                 extraProps.push(
                     ...current.properties.map(p => ({
                         ...p,
@@ -90,34 +97,24 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     // --- Select 字段逻辑 ---
     const selectItems = useMemo(() => {
         if (!currentSchema) return [];
-        
         const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
-        
         const items = [
             { name: ALL_KEY, type: 'Special', label: '全选 (Select All)', isExpanded: false },
             ...mainProps,
             ...expandedEntityProperties
         ];
-        
         return items;
     }, [currentSchema, expandedEntityProperties]);
 
     const currentSelectKeys = useMemo(() => {
         const selected = new Set(select ? select.split(',') : []);
-        
         if (currentSchema) {
-            // 获取下拉框中所有可选项的 Key (主实体 + 扩展实体)
             const allAvailableKeys = [
                 ...currentSchema.properties.map(p => p.name),
                 ...expandedEntityProperties.map(p => p.name)
             ];
-            
-            // 判断是否所有可选项都已被选中
             const allSelected = allAvailableKeys.length > 0 && allAvailableKeys.every(n => selected.has(n));
-            
-            if (allSelected) {
-                selected.add(ALL_KEY);
-            }
+            if (allSelected) selected.add(ALL_KEY);
         }
         return selected;
     }, [select, currentSchema, expandedEntityProperties]);
@@ -126,7 +123,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         if (!currentSchema) return;
         const newSet = new Set(keys);
         
-        // 计算当前所有可用的字段 (主实体 + 扩展实体)
         const allAvailableKeys = [
             ...currentSchema.properties.map(p => p.name),
             ...expandedEntityProperties.map(p => p.name)
@@ -138,22 +134,18 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         let finalSelection: string[] = [];
 
         if (isAllSelected && !wasAllSelected) {
-            // 点击了全选 -> 选中所有 (包括扩展字段)
             finalSelection = allAvailableKeys;
         } else if (!isAllSelected && wasAllSelected) {
-            // 取消了全选 -> 清空所有
             finalSelection = [];
         } else {
-            // 普通选择
             newSet.delete(ALL_KEY);
             finalSelection = Array.from(newSet).map(String);
         }
 
-        // 去重并设置
         setSelect(Array.from(new Set(finalSelection)).join(','));
     };
 
-    // --- Expand 字段逻辑 (支持级联) ---
+    // --- Expand 字段逻辑 ---
     const expandItems = useMemo(() => {
         if (!currentSchema || !schema) return [];
         if (currentSchema.navigationProperties.length === 0) {
@@ -162,15 +154,12 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
 
         const buildPaths = (entityName: string, parentPath: string, currentDepth: number): any[] => {
             if (currentDepth >= 2) return [];
-
             const entity = schema.entities.find(e => e.name === entityName);
             if (!entity) return [];
 
             let results: any[] = [];
-            
             for (const nav of entity.navigationProperties) {
                 const currentPath = parentPath ? `${parentPath}/${nav.name}` : nav.name;
-                
                 results.push({
                     name: currentPath,
                     label: nav.name,
@@ -186,7 +175,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                         targetTypeName = targetTypeName.slice(11, -1);
                     }
                     targetTypeName = targetTypeName.split('.').pop() || "";
-                    
                     if (targetTypeName) {
                         const children = buildPaths(targetTypeName, currentPath, currentDepth + 1);
                         results = results.concat(children);
@@ -195,7 +183,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             }
             return results;
         };
-
         return buildPaths(currentSchema.name, "", 0);
     }, [currentSchema, schema]);
 
@@ -209,12 +196,44 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         setExpand(Array.from(newSet).join(','));
     };
 
-    // --- Sort 字段逻辑 ---
-    const sortItems = useMemo(() => {
+    // --- Sort 字段逻辑 (支持多选和独立排序) ---
+    const sortOptions = useMemo(() => {
         if (!currentSchema) return [];
         const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
         return [...mainProps, ...expandedEntityProperties];
     }, [currentSchema, expandedEntityProperties]);
+
+    const currentSortKeys = useMemo(() => {
+        return new Set(sortItems.map(i => i.field));
+    }, [sortItems]);
+
+    const handleSortSelectionChange = (keys: Selection) => {
+        const newKeys = new Set(keys);
+        
+        // 1. 保留现有的 items (如果它们还在新集合里)
+        const keptItems = sortItems.filter(item => newKeys.has(item.field));
+        
+        // 2. 找出新增的 keys
+        const existingKeySet = new Set(sortItems.map(i => i.field));
+        const addedKeys = Array.from(newKeys).filter(k => !existingKeySet.has(String(k)));
+        
+        // 3. 创建新 items
+        const newItems = addedKeys.map(k => ({ field: String(k), order: 'asc' as const }));
+        
+        setSortItems([...keptItems, ...newItems]);
+    };
+
+    const toggleSortOrder = (field: string) => {
+        setSortItems(sortItems.map(item => 
+            item.field === field 
+                ? { ...item, order: item.order === 'asc' ? 'desc' : 'asc' } 
+                : item
+        ));
+    };
+
+    const removeSortItem = (field: string) => {
+        setSortItems(sortItems.filter(item => item.field !== field));
+    };
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl bg-content1 shadow-sm border border-divider shrink-0">
@@ -235,46 +254,74 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             <div className="md:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Input label="过滤 ($filter)" placeholder="例如: Price gt 20" value={filter} onValueChange={setFilter} size="sm" variant="bordered" />
 
-                {/* 排序 ($orderby) */}
-                <div className="flex gap-1 items-end">
-                    <div className="flex-1">
-                        {currentSchema ? (
-                            <Select
-                                label="排序 ($orderby)"
-                                placeholder="字段"
-                                selectedKeys={sortField ? [sortField] : []}
-                                onSelectionChange={(k) => setSortField(Array.from(k).join(''))}
-                                size="sm"
-                                variant="bordered"
-                                classNames={{ value: "text-xs" }}
-                                items={sortItems}
-                            >
-                                {(p) => (
-                                    <SelectItem key={p.name} value={p.name} textValue={p.name}>
-                                        <div className="flex items-center gap-2">
-                                            {p.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
-                                            <div className="flex flex-col">
-                                                <span className={`text-small ${p.isExpanded ? 'text-secondary' : ''}`}>{p.name}</span>
-                                            </div>
+                {/* 排序 ($orderby) - 支持多选与独立顺序 */}
+                <div className="md:col-span-1">
+                    {currentSchema ? (
+                        <Select
+                            label="排序 ($orderby)"
+                            placeholder="选择排序字段"
+                            selectionMode="multiple"
+                            selectedKeys={currentSortKeys}
+                            onSelectionChange={handleSortSelectionChange}
+                            size="sm"
+                            variant="bordered"
+                            classNames={{ 
+                                value: "text-xs",
+                                trigger: "min-h-unit-10"
+                            }}
+                            items={sortOptions}
+                            isMultiline={true}
+                            renderValue={(items) => {
+                                return (
+                                    <div className="flex flex-wrap gap-1">
+                                        {items.map((item) => {
+                                            const sortItem = sortItems.find(i => i.field === item.key);
+                                            const isAsc = sortItem?.order === 'asc';
+                                            return (
+                                                <Chip 
+                                                    key={item.key} 
+                                                    size="sm" 
+                                                    variant="flat"
+                                                    onClose={() => removeSortItem(String(item.key))}
+                                                    classNames={{ base: "h-5 text-[10px] gap-1 px-1" }}
+                                                >
+                                                    <div 
+                                                        className="flex items-center gap-1 cursor-pointer select-none"
+                                                        onClick={(e) => { e.stopPropagation(); toggleSortOrder(String(item.key)); }}
+                                                        title="点击切换升/降序"
+                                                    >
+                                                        <span>{item.data?.name}</span>
+                                                        {isAsc ? <ArrowDownAz size={10} /> : <ArrowUpZa size={10} />}
+                                                    </div>
+                                                </Chip>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            }}
+                        >
+                            {(p) => (
+                                <SelectItem key={p.name} value={p.name} textValue={p.name}>
+                                    <div className="flex items-center gap-2">
+                                        {p.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
+                                        <div className="flex flex-col">
+                                            <span className={`text-small ${p.isExpanded ? 'text-secondary' : ''}`}>{p.name}</span>
                                         </div>
-                                    </SelectItem>
-                                )}
-                            </Select>
-                        ) : (
-                            <Input label="排序 ($orderby)" placeholder="字段" value={sortField} onValueChange={setSortField} size="sm" variant="bordered" />
-                        )}
-                    </div>
-                    <Button
-                        isIconOnly
-                        size="sm"
-                        variant="flat"
-                        color={sortOrder === 'asc' ? 'default' : 'secondary'}
-                        onPress={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                        title={sortOrder === 'asc' ? '升序 (Ascending)' : '降序 (Descending)'}
-                        className="mb-0.5"
-                    >
-                        {sortOrder === 'asc' ? <ArrowDownAz size={18} /> : <ArrowUpZa size={18} />}
-                    </Button>
+                                    </div>
+                                </SelectItem>
+                            )}
+                        </Select>
+                    ) : (
+                        <Input 
+                            label="排序 ($orderby)" 
+                            placeholder="字段 (例如: Price desc)" 
+                            value={sortItems.length > 0 ? sortItems.map(i => `${i.field} ${i.order}`).join(',') : ''} 
+                            // 简单回退处理：如果手动输入，视为单个 asc 字段
+                            onValueChange={(v) => setSortItems(v ? [{ field: v, order: 'asc' }] : [])} 
+                            size="sm" 
+                            variant="bordered" 
+                        />
+                    )}
                 </div>
 
                 <div className="flex gap-2 items-center">
@@ -359,7 +406,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                                 if (item.type === 'placeholder') {
                                     return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
                                 }
-                                // 根据层级进行缩进渲染
                                 const indent = item.level > 0 ? `${item.level * 12}px` : '0px';
                                 return (
                                     <SelectItem key={item.name} value={item.name} textValue={item.name}>

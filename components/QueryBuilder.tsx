@@ -3,7 +3,7 @@ import { useDisclosure, Selection } from "@nextui-org/react";
 import { generateSAPUI5Code, ODataVersion, ParsedSchema } from '@/utils/odata-helper';
 import xmlFormat from 'xml-formatter';
 
-import { ParamsForm } from './query-builder/ParamsForm';
+import { ParamsForm, SortItem } from './query-builder/ParamsForm';
 import { UrlBar } from './query-builder/UrlBar';
 import { ResultTabs } from './query-builder/ResultTabs';
 import { CodeModal } from './query-builder/CodeModal';
@@ -23,8 +23,10 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const [filter, setFilter] = useState('');
   const [select, setSelect] = useState('');
   const [expand, setExpand] = useState('');
-  const [sortField, setSortField] = useState('');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  
+  // 替换为 sortItems 支持多字段排序
+  const [sortItems, setSortItems] = useState<SortItem[]>([]);
+  
   const [top, setTop] = useState('20');
   const [skip, setSkip] = useState('0');
   const [count, setCount] = useState(false);
@@ -92,7 +94,12 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     if (filter) params.append('$filter', filter);
     if (select) params.append('$select', select);
     if (expand) params.append('$expand', expand);
-    if (sortField) params.append('$orderby', `${sortField} ${sortOrder}`);
+    
+    if (sortItems.length > 0) {
+        const orderbyStr = sortItems.map(item => `${item.field} ${item.order}`).join(',');
+        params.append('$orderby', orderbyStr);
+    }
+
     if (top) params.append('$top', top);
     if (skip) params.append('$skip', skip);
     if (count) {
@@ -103,7 +110,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     const queryString = params.toString();
     const displayQuery = queryString ? `?${decodeURIComponent(queryString)}` : '';
     setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
-  }, [url, selectedEntity, filter, select, expand, sortField, sortOrder, top, skip, count, version]);
+  }, [url, selectedEntity, filter, select, expand, sortItems, top, skip, count, version]);
 
   // 3. 执行查询
   const executeQuery = async () => {
@@ -164,10 +171,11 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   };
 
   const copyReadCode = () => {
+    const orderbyStr = sortItems.length > 0 ? sortItems.map(i => `${i.field} ${i.order}`).join(',') : undefined;
     const code = generateSAPUI5Code('read', selectedEntity, {
       filters: filter ? [{field: 'Manual', operator: 'EQ', value: filter}] : [], 
       expand, select, 
-      orderby: sortField ? `${sortField} ${sortOrder}` : undefined,
+      orderby: orderbyStr,
       top, skip, inlinecount: count
     }, version);
     navigator.clipboard.writeText(code);
@@ -188,8 +196,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     setSelect('');
     setExpand('');
     setFilter('');
-    setSortField('');
-    setSortOrder('asc');
+    setSortItems([]); // 重置排序
   };
 
   const downloadFile = (content: string, filename: string, type: 'json' | 'xml') => {
@@ -214,8 +221,9 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           filter={filter} setFilter={setFilter}
           select={select} setSelect={setSelect}
           expand={expand} setExpand={setExpand}
-          sortField={sortField} setSortField={setSortField}
-          sortOrder={sortOrder} setSortOrder={setSortOrder}
+          
+          sortItems={sortItems} setSortItems={setSortItems}
+
           top={top} setTop={setTop}
           skip={skip} setSkip={setSkip}
           count={count} setCount={setCount}
