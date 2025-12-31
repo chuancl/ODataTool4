@@ -10,7 +10,6 @@ import ReactFlow, {
   NodeProps,
   Edge,
   Node,
-  useStore,
   useUpdateNodeInternals,
   useReactFlow,
   ReactFlowProvider
@@ -18,9 +17,9 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema, EntityProperty } from '@/utils/odata-helper';
-import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip, Switch } from "@nextui-org/react";
-import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive, Type } from 'lucide-react';
-import { useReactTable, getCoreRowModel, getSortedRowModel, flexRender, createColumnHelper, SortingState } from '@tanstack/react-table';
+import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Chip, Switch } from "@nextui-org/react";
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive, GripVertical } from 'lucide-react';
+import { useReactTable, getCoreRowModel, getSortedRowModel, flexRender, createColumnHelper, SortingState, ColumnOrderState } from '@tanstack/react-table';
 
 const elk = new ELK();
 
@@ -55,20 +54,27 @@ interface DynamicHandleConfig {
 const EntityDetailsTable = ({ 
     properties, 
     keys, 
-    getFkInfo 
+    getFkInfo,
+    onJumpToEntity
 }: { 
     properties: EntityProperty[], 
     keys: string[], 
-    getFkInfo: (name: string) => any 
+    getFkInfo: (name: string) => any,
+    onJumpToEntity: (name: string) => void
 }) => {
     const [sorting, setSorting] = useState<SortingState>([]);
+    const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(['name', 'type', 'size', 'attributes', 'defaultValue', 'relation']);
+    const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
+
     const columnHelper = createColumnHelper<EntityProperty>();
 
     const columns = useMemo(() => [
         // 1. Name Column
         columnHelper.accessor('name', {
+            id: 'name',
             header: 'Field',
             enableSorting: true,
+            minSize: 100,
             cell: info => {
                 const isKey = keys.includes(info.getValue());
                 return (
@@ -84,16 +90,19 @@ const EntityDetailsTable = ({
 
         // 2. Type Column
         columnHelper.accessor('type', {
+            id: 'type',
             header: 'Type',
             enableSorting: true,
+            size: 80,
             cell: info => <span className="font-mono text-[10px] text-primary/80">{info.getValue().split('.').pop()}</span>
         }),
 
-        // 3. Size/Precision Column (Combines MaxLength, Precision, Scale)
+        // 3. Size/Precision Column
         columnHelper.accessor(row => row.maxLength || row.precision || 0, {
             id: 'size',
             header: 'Size',
             enableSorting: true,
+            size: 60,
             cell: info => {
                 const p = info.row.original;
                 if (p.maxLength) return <span className="font-mono text-[10px] text-default-500">{p.maxLength}</span>;
@@ -102,37 +111,36 @@ const EntityDetailsTable = ({
             }
         }),
 
-        // 4. Attributes Column (Nullable, Fixed, Unicode, Concurrency)
+        // 4. Attributes Column
         columnHelper.accessor(row => `${row.nullable}${row.unicode}${row.fixedLength}${row.concurrencyMode}`, {
             id: 'attributes',
             header: 'Attributes',
             enableSorting: false, 
+            size: 160,
             cell: info => {
                 const p = info.row.original;
                 return (
-                    <div className="flex items-center gap-1 flex-wrap max-w-[120px]">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Nullable status */}
                         {!p.nullable && (
-                            <span title="Required (Not Null)" className="cursor-help px-1 rounded-[3px] bg-danger/10 text-danger text-[9px] font-bold border border-danger/20">Req</span>
+                            <span title="Field is Required (Not Null)" className="px-1.5 py-0.5 rounded-[3px] bg-danger/10 text-danger text-[9px] font-semibold border border-danger/20">Required</span>
                         )}
                         
                         {/* Fixed Length */}
                         {p.fixedLength && (
-                             <span title="Fixed Length" className="cursor-help px-1 rounded-[3px] bg-default-100 text-default-600 text-[9px] font-medium border border-default-200">Fix</span>
+                             <span title="Fixed Length String/Binary" className="px-1.5 py-0.5 rounded-[3px] bg-default-100 text-default-600 text-[9px] font-medium border border-default-200">Fixed Length</span>
                         )}
 
                         {/* Unicode Status */}
                         {p.unicode === false ? (
-                             <span title="ANSI (Non-Unicode)" className="cursor-help px-1 rounded-[3px] bg-warning/10 text-warning-700 text-[9px] font-medium border border-warning/20">Ansi</span>
+                             <span title="Non-Unicode (ANSI)" className="px-1.5 py-0.5 rounded-[3px] bg-warning/10 text-warning-700 text-[9px] font-medium border border-warning/20">Non-Unicode</span>
                         ) : (
-                             // Optional: Show Unicode explicitly if you want, or assume default. 
-                             // Showing it makes it "complete" as requested.
-                             <span title="Unicode" className="cursor-help px-1 rounded-[3px] bg-primary/5 text-primary/70 text-[9px] font-medium border border-primary/10">Uni</span>
+                             <span title="Unicode Enabled" className="px-1.5 py-0.5 rounded-[3px] bg-primary/5 text-primary/70 text-[9px] font-medium border border-primary/10">Unicode</span>
                         )}
 
                         {/* Concurrency */}
                         {p.concurrencyMode === 'Fixed' && (
-                            <span title="Concurrency Mode: Fixed" className="cursor-help px-1 rounded-[3px] bg-success/10 text-success-700 text-[9px] font-medium border border-success/20">Lock</span>
+                            <span title="Optimistic Concurrency Control" className="px-1.5 py-0.5 rounded-[3px] bg-success/10 text-success-700 text-[9px] font-medium border border-success/20">Concurrency</span>
                         )}
                     </div>
                 );
@@ -141,61 +149,109 @@ const EntityDetailsTable = ({
 
         // 5. Default Value
         columnHelper.accessor('defaultValue', {
+            id: 'defaultValue',
             header: 'Default',
             enableSorting: true,
-            cell: info => info.getValue() ? <span className="font-mono text-[10px] bg-default-50 px-1 rounded border border-default-100 text-default-600 max-w-[60px] truncate block" title={info.getValue()}>{info.getValue()}</span> : <span className="text-default-200 text-[10px]">-</span>
+            size: 80,
+            cell: info => info.getValue() ? <span className="font-mono text-[10px] bg-default-50 px-1 rounded border border-default-100 text-default-600 max-w-[80px] truncate block" title={info.getValue()}>{info.getValue()}</span> : <span className="text-default-200 text-[10px]">-</span>
         }),
 
-        // 6. Relation Column (Restored!)
+        // 6. Relation Column
         columnHelper.display({
             id: 'relation',
             header: 'Relation',
+            size: 180,
             cell: info => {
                 const fk = getFkInfo(info.row.original.name);
                 if (!fk) return null;
                 return (
-                    <div className="flex flex-col text-[9px] leading-tight group cursor-pointer hover:bg-secondary/5 rounded p-0.5 -m-0.5 transition-colors" title={`Foreign Key to ${fk.targetEntity} via ${fk.navName}`}>
-                        <div className="flex items-center gap-1 text-secondary font-semibold">
-                            <Link2 size={8} />
-                            <span className="truncate max-w-[80px]">{fk.targetEntity}</span>
+                    <div className="flex items-center gap-1 text-[10px] w-full group">
+                        <Link2 size={10} className="text-secondary shrink-0" />
+                        <div className="flex items-center gap-0.5 overflow-hidden">
+                            <span 
+                                className="font-bold text-secondary cursor-pointer hover:underline hover:text-secondary-600 truncate" 
+                                onClick={(e) => { e.stopPropagation(); onJumpToEntity(fk.targetEntity); }}
+                                title={`Jump to Entity: ${fk.targetEntity}`}
+                            >
+                                {fk.targetEntity}
+                            </span>
+                            <span className="text-default-400">.</span>
+                            <span className="font-mono text-default-600 truncate" title={`Target Field: ${fk.targetProperty}`}>{fk.targetProperty}</span>
                         </div>
-                        <span className="opacity-60 pl-3 font-mono truncate max-w-[80px]">.{fk.targetProperty}</span>
                     </div>
                 );
             }
         })
 
-    ], [keys, getFkInfo]);
+    ], [keys, getFkInfo, onJumpToEntity]);
 
     const table = useReactTable({
         data: properties,
         columns,
-        state: { sorting },
+        state: { sorting, columnOrder },
         onSortingChange: setSorting,
+        onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
+        enableColumnResizing: true,
+        columnResizeMode: 'onChange',
     });
 
     return (
-        <div className="w-full">
-            <table className="w-full text-left border-collapse">
+        <div className="w-full h-full flex flex-col">
+            <table className="w-full text-left border-collapse table-fixed">
                 <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
                     {table.getHeaderGroups().map(headerGroup => (
                         <tr key={headerGroup.id}>
                             {headerGroup.headers.map(header => (
                                 <th 
                                     key={header.id} 
-                                    className="p-2 py-2.5 text-[10px] font-bold text-default-500 uppercase tracking-wider cursor-pointer hover:bg-default-100 transition-colors select-none group border-r border-divider/20 last:border-r-0"
-                                    onClick={header.column.getToggleSortingHandler()}
-                                    style={{ width: header.column.getSize() }}
+                                    className="relative p-2 py-2.5 text-[10px] font-bold text-default-500 uppercase tracking-wider select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
+                                    style={{ width: header.getSize() }}
+                                    draggable={!header.isPlaceholder}
+                                    onDragStart={(e) => {
+                                        setDraggingColumn(header.column.id);
+                                        e.dataTransfer.effectAllowed = 'move';
+                                    }}
+                                    onDragOver={(e) => e.preventDefault()}
+                                    onDrop={(e) => {
+                                        e.preventDefault();
+                                        if (draggingColumn && draggingColumn !== header.column.id) {
+                                            const newOrder = [...columnOrder];
+                                            const dragIndex = newOrder.indexOf(draggingColumn);
+                                            const dropIndex = newOrder.indexOf(header.column.id);
+                                            if (dragIndex !== -1 && dropIndex !== -1) {
+                                                newOrder.splice(dragIndex, 1);
+                                                newOrder.splice(dropIndex, 0, draggingColumn);
+                                                setColumnOrder(newOrder);
+                                            }
+                                            setDraggingColumn(null);
+                                        }
+                                    }}
                                 >
-                                    <div className="flex items-center gap-1">
-                                        {flexRender(header.column.columnDef.header, header.getContext())}
-                                        {{
-                                            asc: <ChevronUp size={10} className="text-primary" />,
-                                            desc: <ChevronDown size={10} className="text-primary" />,
-                                        }[header.column.getIsSorted() as string] ?? <ArrowUpDown size={10} className="opacity-0 group-hover:opacity-40 transition-opacity" />}
+                                    <div className="flex items-center gap-1 w-full">
+                                        <GripVertical size={10} className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        
+                                        <div 
+                                            className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
+                                            onClick={header.column.getToggleSortingHandler()}
+                                        >
+                                            <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
+                                            {{
+                                                asc: <ChevronUp size={10} className="text-primary shrink-0" />,
+                                                desc: <ChevronDown size={10} className="text-primary shrink-0" />,
+                                            }[header.column.getIsSorted() as string] ?? null}
+                                        </div>
                                     </div>
+                                    
+                                    {/* Resizer Handle */}
+                                    <div
+                                        onMouseDown={header.getResizeHandler()}
+                                        onTouchStart={header.getResizeHandler()}
+                                        className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 ${
+                                            header.column.getIsResizing() ? 'bg-primary w-1.5' : 'bg-transparent'
+                                        }`}
+                                    />
                                 </th>
                             ))}
                         </tr>
@@ -212,7 +268,7 @@ const EntityDetailsTable = ({
                             `}
                         >
                             {row.getVisibleCells().map(cell => (
-                                <td key={cell.id} className="p-2 text-[11px] h-9 border-r border-divider/20 last:border-r-0 align-middle">
+                                <td key={cell.id} className="p-2 text-[11px] h-9 border-r border-divider/20 last:border-r-0 align-middle overflow-hidden text-ellipsis">
                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                 </td>
                             ))}
@@ -336,20 +392,16 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   }, [isExpanded, id, updateNodeInternals]);
 
   // 处理导航跳转
-  const handleJumpToEntity = useCallback((e: React.MouseEvent, targetEntityName: string) => {
-    e.stopPropagation();
-    const targetId = targetEntityName;
+  const handleJumpToEntity = useCallback((targetEntityName: string) => {
     const nodes = getNodes();
-    const targetNode = nodes.find(n => n.id === targetId);
+    const targetNode = nodes.find(n => n.id === targetEntityName);
 
     if (targetNode) {
       fitView({
-        nodes: [{ id: targetId }],
+        nodes: [{ id: targetEntityName }],
         padding: 0.5,
         duration: 1000,
       });
-    } else {
-      console.warn(`Target node ${targetId} not found.`);
     }
   }, [getNodes, fitView]);
 
@@ -426,7 +478,12 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                     {data.label}
                 </span>
             </PopoverTrigger>
-            <PopoverContent className="w-[600px] p-0">
+            <PopoverContent 
+                className="w-[800px] p-0" 
+                // 防止 Popover 内部点击冒泡导致 ReactFlow 画布暗化
+                onMouseDown={(e) => e.stopPropagation()} 
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden flex flex-col max-h-[600px]">
                     <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
                         <div className="flex items-center gap-2 font-bold text-default-700">
@@ -439,11 +496,15 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                         </Button>
                     </div>
                     
-                    <ScrollShadow className="flex-1 overflow-auto bg-content1">
+                    <ScrollShadow className="flex-1 overflow-auto bg-content1" size={10}>
                          <EntityDetailsTable 
                             properties={data.properties} 
                             keys={data.keys} 
                             getFkInfo={getForeignKeyInfo}
+                            onJumpToEntity={(name) => {
+                                handleJumpToEntity(name);
+                                // Optional: Close popover on jump? setShowEntityDetails(false);
+                            }}
                          />
                     </ScrollShadow>
                     
@@ -492,7 +553,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             {prop.name}
                         </span>
                     </PopoverTrigger>
-                    <PopoverContent className="p-3 w-[280px]">
+                    <PopoverContent className="p-3 w-[280px]" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                         <div className="text-xs flex flex-col gap-3">
                             {/* Header */}
                             <div className="font-bold flex items-center justify-between border-b border-divider pb-2">
@@ -523,7 +584,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
 
                             <Divider className="opacity-50"/>
                             
-                            {/* Constraints & Facets - Display ALL available info */}
+                            {/* Constraints & Facets */}
                             <div className="flex flex-wrap gap-2">
                                 {/* Size/Precision */}
                                 {prop.maxLength !== undefined && (
@@ -564,7 +625,9 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             
                             {/* FK Relation Section */}
                             {fkInfo && (
-                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1">
+                                <div className="bg-secondary/10 p-2 rounded border border-secondary/20 mt-1 cursor-pointer hover:bg-secondary/20 transition-colors"
+                                     onClick={(e) => { e.stopPropagation(); handleJumpToEntity(fkInfo.targetEntity); }}
+                                >
                                     <div className="text-[10px] text-secondary font-bold mb-1 flex items-center gap-1">
                                         <Link2 size={10} /> Foreign Key Relation
                                     </div>
@@ -618,7 +681,7 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             <div 
                                 key={nav.name} 
                                 className="group flex items-center justify-start gap-2 p-1.5 rounded-sm bg-content1/50 hover:bg-content1 hover:shadow-sm border border-transparent hover:border-secondary/20 transition-all cursor-pointer text-secondary-700"
-                                onClick={(e) => handleJumpToEntity(e, cleanType)}
+                                onClick={(e) => { e.stopPropagation(); handleJumpToEntity(cleanType); }}
                                 title={`Jump to ${cleanType}`}
                             >
                                 <span className="flex items-center gap-1.5 truncate w-full">
