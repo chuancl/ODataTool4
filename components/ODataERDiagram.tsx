@@ -18,8 +18,8 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema, EntityProperty } from '@/utils/odata-helper';
-import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip } from "@nextui-org/react";
-import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus } from 'lucide-react';
+import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Badge, Chip, Switch } from "@nextui-org/react";
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Check, Minus, Zap } from 'lucide-react';
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 
 const elk = new ELK();
@@ -529,6 +529,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
+  const [isPerformanceMode, setIsPerformanceMode] = useState(false); // 默认关闭性能模式
 
   // 用于管理高亮节点 ID 的集合
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
@@ -537,42 +538,40 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   
-  // Throttle state removed
-  // const lastDragTime = useRef(0);
-  // const rafRef = useRef<number | null>(null);
-
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
 
+  // 提取布局更新逻辑
+  const performLayoutUpdate = useCallback((draggedNodes: Node[] = []) => {
+      const currentNodes = nodesRef.current;
+      const currentEdges = edgesRef.current;
+      
+      const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
+      const mergedNodes = currentNodes.map(n => {
+          const dragged = draggedMap.get(n.id);
+          if (dragged) {
+              return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
+          }
+          return n;
+      });
+
+      const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
+      setNodes(newNodes);
+      setEdges(newEdges);
+  }, [setNodes, setEdges]);
+
   // [REAL-TIME DRAG]
-  // 移除节流，每次拖动直接计算
+  // 实时拖动处理：如果开启性能模式，则跳过计算，仅由 ReactFlow 处理节点位移
   const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
-    // 移除时间检测
-    // const now = Date.now();
-    // if (now - lastDragTime.current < 30) return;
-    // lastDragTime.current = now;
+    if (isPerformanceMode) return; 
+    performLayoutUpdate(draggedNodes);
+  }, [isPerformanceMode, performLayoutUpdate]); 
 
-    // 移除 RAF，直接执行
-    const currentNodes = nodesRef.current;
-    const currentEdges = edgesRef.current;
-    
-    // 1. 合并位置数据
-    const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
-    const mergedNodes = currentNodes.map(n => {
-        const dragged = draggedMap.get(n.id);
-        if (dragged) {
-            return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
-        }
-        return n;
-    });
-
-    // 2. 重新计算布局 (Handle位置和连接方向)
-    const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
-    
-    // 3. 更新状态
-    setNodes(newNodes);
-    setEdges(newEdges); 
-  }, [setNodes, setEdges]); 
+  // [DRAG STOP]
+  // 拖动结束：强制进行一次完整布局计算，确保连线和端口位置正确（尤其是在性能模式下）
+  const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
+      performLayoutUpdate(draggedNodes);
+  }, [performLayoutUpdate]);
 
   useEffect(() => {
     if (!url) return;
@@ -835,8 +834,15 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
         </div>
       )}
 
-      <div className="absolute top-4 right-4 z-10">
-        <Button size="sm" color="primary" variant="flat" onPress={resetView}>Reset View</Button>
+      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
+        <div className="flex items-center gap-2 bg-content1/90 backdrop-blur-md p-1.5 px-3 rounded-lg border border-divider shadow-sm">
+            <span className="text-xs font-medium text-default-500 flex items-center gap-1">
+                <Zap size={14} className={isPerformanceMode ? "text-warning" : "text-default-400"} fill={isPerformanceMode ? "currentColor" : "none"} />
+                性能模式
+            </span>
+            <Switch size="sm" isSelected={isPerformanceMode} onValueChange={setIsPerformanceMode} aria-label="性能模式" />
+        </div>
+        <Button size="sm" color="primary" variant="flat" onPress={resetView}>重置视图</Button>
       </div>
       
       <ReactFlow
@@ -845,6 +851,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
