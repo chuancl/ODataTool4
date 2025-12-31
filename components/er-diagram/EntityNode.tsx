@@ -126,7 +126,8 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
           border-2 rounded-lg min-w-[240px] max-w-[300px] bg-content1 transition-all
           ${selected ? 'border-primary shadow-2xl ring-2 ring-primary/30' : 'border-divider shadow-sm'}
         `}
-        onMouseDown={() => addActiveEntity(id)} // Ensure clicking the card also brings to front
+        // REMOVED: onMouseDown={() => addActiveEntity(id)} 
+        // We only want explicit clicks on the name to trigger the table, or clicking the table itself.
       >
         
         {dynamicHandles.map((handle) => {
@@ -149,11 +150,15 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
 
         {/* --- Entity Title Header --- */}
         <div 
-            className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md flex items-center justify-center gap-2 group cursor-pointer hover:bg-primary/15 transition-colors"
-            onClick={(e) => { e.stopPropagation(); addActiveEntity(id); }}
+            className="bg-primary/10 p-2 font-bold text-center border-b border-divider text-sm text-primary rounded-t-md flex items-center justify-center gap-2 group transition-colors"
+            // REMOVED: onClick handler from the container div
         >
           <Table2 size={14} />
-          <span className="hover:underline underline-offset-2 decoration-primary/50">
+          <span 
+              className="hover:underline underline-offset-2 decoration-primary/50 cursor-pointer"
+              // ADDED: onClick handler strictly on the Name text
+              onClick={(e) => { e.stopPropagation(); addActiveEntity(id); }}
+          >
              {data.label}
           </span>
           <Info size={12} className="opacity-0 group-hover:opacity-50 transition-opacity" />
