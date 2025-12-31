@@ -120,11 +120,14 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         style={{ zIndex: showEntityDetails ? 2000 : undefined }}
     >
       {/* --- Main Node Card --- */}
-      <div className={`
-        relative flex flex-col
-        border-2 rounded-lg min-w-[240px] max-w-[300px] bg-content1 transition-all
-        ${selected ? 'border-primary shadow-2xl ring-2 ring-primary/30' : 'border-divider shadow-sm'}
-      `}>
+      <div 
+        className={`
+          relative flex flex-col
+          border-2 rounded-lg min-w-[240px] max-w-[300px] bg-content1 transition-all
+          ${selected ? 'border-primary shadow-2xl ring-2 ring-primary/30' : 'border-divider shadow-sm'}
+        `}
+        onMouseDown={() => addActiveEntity(id)} // Ensure clicking the card also brings to front
+      >
         
         {dynamicHandles.map((handle) => {
           const isVertical = handle.position === Position.Top || handle.position === Position.Bottom;
@@ -344,20 +347,14 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         <div 
             // Important: 'nodrag' prevents ReactFlow from dragging the node when interacting with the table.
             // 'nowheel' prevents the canvas from zooming when scrolling the table.
-            // onMouseDown: Stop propagation so we don't drag the node, AND triggers 'addActiveEntity' to bring node to front.
-            // onClick: Stop propagation so we DON'T trigger 'onNodeClick' (highlighting logic) in the parent graph.
+            // onMouseDown: Trigger 'addActiveEntity' to bring node to front. NO STOP PROPAGATION.
+            // onClick: Stop propagation to prevent 'onNodeClick' (highlighting logic).
             className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in nodrag nowheel"
-            onMouseDown={(e) => {
-                e.stopPropagation(); // Block drag/selection of the underlying node
-                addActiveEntity(id); // Bring this entity stack to the top (Z-Index) immediately (Covers header/border)
-            }}
-            onClick={(e) => {
-                e.stopPropagation(); // Block 'highlight connected entities' logic
-            }}
+            onMouseDown={() => addActiveEntity(id)}
+            onClick={(e) => e.stopPropagation()}
         >
             <div className="bg-content1 rounded-lg shadow-2xl border border-divider overflow-hidden flex flex-col max-h-[600px] ring-1 ring-black/5">
                 <div 
-                    // No stopPropagation onMouseDown here! Let it bubble to the wrapper to update Z-index.
                     className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0"
                 >
                     <div className="flex items-center gap-3 font-bold text-default-700 text-sm">
@@ -384,7 +381,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                                 // Link inside Table -> Jump AND Open Popover (Close current, open target)
                                 handleJumpToEntity(name, true);
                             }}
-                            onFocus={() => addActiveEntity(id)} // Pass callback to table root
+                            onFocus={() => addActiveEntity(id)} 
                         />
                 </ScrollShadow>
                 

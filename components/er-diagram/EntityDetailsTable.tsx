@@ -161,9 +161,7 @@ export const EntityDetailsTable = ({
     });
 
     return (
-        // ROOT HANDLER: Capture MouseDown everywhere else in the table to bring it to front.
-        // This covers empty space, rows, and headers (unless propagation is stopped).
-        <div className="w-full h-full flex flex-col" onMouseDown={onFocus}>
+        <div className="w-full h-full flex flex-col">
             <table className="w-full text-left border-collapse table-fixed">
                 <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
                     {table.getHeaderGroups().map(headerGroup => (
@@ -202,7 +200,6 @@ export const EntityDetailsTable = ({
                                         
                                         <div 
                                             className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
-                                            // Bubbles up to Root div -> triggers onFocus (Z-Index update) on MouseDown.
                                             onClick={header.column.getToggleSortingHandler()}
                                         >
                                             <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
@@ -215,18 +212,8 @@ export const EntityDetailsTable = ({
                                     
                                     {/* Resizer Handle */}
                                     <div
-                                        // STRATEGY: Resizing is a drag. We MUST stop propagation to prevent ReactFlow from dragging the Node.
-                                        // BUT, we also want to bring the table to front. So we manually call onFocus here.
-                                        onMouseDown={(e) => {
-                                            e.stopPropagation();
-                                            onFocus?.();
-                                            header.getResizeHandler()(e);
-                                        }}
-                                        onTouchStart={(e) => {
-                                            e.stopPropagation();
-                                            onFocus?.();
-                                            header.getResizeHandler()(e);
-                                        }}
+                                        onMouseDown={header.getResizeHandler()}
+                                        onTouchStart={header.getResizeHandler()}
                                         className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 ${
                                             header.column.getIsResizing() ? 'bg-primary w-1.5' : 'bg-transparent'
                                         }`}
