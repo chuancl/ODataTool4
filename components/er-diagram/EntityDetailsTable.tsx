@@ -124,13 +124,14 @@ export const EntityDetailsTable = ({
                         <div className="flex items-center gap-0.5 overflow-hidden">
                             <span 
                                 className="font-bold text-secondary cursor-pointer hover:underline hover:text-secondary-600 truncate" 
-                                // CRITICAL: Stop propagation on MouseDown ONLY for the link. 
-                                // This prevents the parent 'EntityNode' from seeing the mousedown and triggering 'addActiveEntity',
-                                // which causes a re-render that might kill the subsequent Click event on this link.
+                                // STRATEGY: 
+                                // 1. Stop propagation on MouseDown. This prevents the Root 'onMouseDown' (which triggers Z-index update) 
+                                //    from firing immediately. This PROTECTS the link click from being killed by a re-render race condition.
                                 onMouseDown={(e) => e.stopPropagation()}
+                                // 2. Handle Jump AND manually trigger Z-index update (onFocus) on Click.
                                 onClick={(e) => { 
                                     e.stopPropagation(); 
-                                    onFocus?.(); // Manually ensure we come to front on click
+                                    onFocus?.(); 
                                     onJumpToEntity(fk.targetEntity); 
                                 }}
                                 title={`Jump to Entity: ${fk.targetEntity}`}
@@ -145,7 +146,7 @@ export const EntityDetailsTable = ({
             }
         })
 
-    ], [keys, getFkInfo, onJumpToEntity]);
+    ], [keys, getFkInfo, onJumpToEntity, onFocus]);
 
     const table = useReactTable({
         data: properties,
@@ -160,7 +161,9 @@ export const EntityDetailsTable = ({
     });
 
     return (
-        <div className="w-full h-full flex flex-col">
+        // ROOT HANDLER: Capture MouseDown everywhere else in the table to bring it to front.
+        // This covers empty space, rows, and headers (unless propagation is stopped).
+        <div className="w-full h-full flex flex-col" onMouseDown={onFocus}>
             <table className="w-full text-left border-collapse table-fixed">
                 <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
                     {table.getHeaderGroups().map(headerGroup => (
@@ -194,13 +197,12 @@ export const EntityDetailsTable = ({
                                     <div className="flex items-center gap-1 w-full">
                                         <GripVertical 
                                             size={12} 
-                                            // Allow this to bubble or handle naturally. Dragging triggers drag events, not just mousedown.
                                             className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" 
                                         />
                                         
                                         <div 
                                             className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
-                                            // ALLOW BUBBLING: Let the click on the header bubble up to the EntityNode wrapper to trigger "Bring to Front".
+                                            // Bubbles up to Root div -> triggers onFocus (Z-Index update) on MouseDown.
                                             onClick={header.column.getToggleSortingHandler()}
                                         >
                                             <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
@@ -213,13 +215,16 @@ export const EntityDetailsTable = ({
                                     
                                     {/* Resizer Handle */}
                                     <div
-                                        // Resizing is a drag operation that needs to be isolated from the parent drag logic
+                                        // STRATEGY: Resizing is a drag. We MUST stop propagation to prevent ReactFlow from dragging the Node.
+                                        // BUT, we also want to bring the table to front. So we manually call onFocus here.
                                         onMouseDown={(e) => {
                                             e.stopPropagation();
+                                            onFocus?.();
                                             header.getResizeHandler()(e);
                                         }}
                                         onTouchStart={(e) => {
                                             e.stopPropagation();
+                                            onFocus?.();
                                             header.getResizeHandler()(e);
                                         }}
                                         className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 ${

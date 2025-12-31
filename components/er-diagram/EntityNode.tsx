@@ -349,7 +349,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
             className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in nodrag nowheel"
             onMouseDown={(e) => {
                 e.stopPropagation(); // Block drag/selection of the underlying node
-                addActiveEntity(id); // Bring this entity stack to the top (Z-Index) immediately
+                addActiveEntity(id); // Bring this entity stack to the top (Z-Index) immediately (Covers header/border)
             }}
             onClick={(e) => {
                 e.stopPropagation(); // Block 'highlight connected entities' logic
@@ -384,7 +384,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                                 // Link inside Table -> Jump AND Open Popover (Close current, open target)
                                 handleJumpToEntity(name, true);
                             }}
-                            onFocus={() => addActiveEntity(id)} 
+                            onFocus={() => addActiveEntity(id)} // Pass callback to table root
                         />
                 </ScrollShadow>
                 
