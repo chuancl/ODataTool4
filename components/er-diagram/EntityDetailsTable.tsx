@@ -7,12 +7,14 @@ export const EntityDetailsTable = ({
     properties, 
     keys, 
     getFkInfo,
-    onJumpToEntity
+    onJumpToEntity,
+    onFocus
 }: { 
     properties: EntityProperty[], 
     keys: string[], 
     getFkInfo: (name: string) => any,
-    onJumpToEntity: (name: string) => void
+    onJumpToEntity: (name: string) => void,
+    onFocus?: () => void
 }) => {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(['name', 'type', 'size', 'attributes', 'defaultValue', 'relation']);
@@ -122,8 +124,8 @@ export const EntityDetailsTable = ({
                         <div className="flex items-center gap-0.5 overflow-hidden">
                             <span 
                                 className="font-bold text-secondary cursor-pointer hover:underline hover:text-secondary-600 truncate" 
-                                // Clean onClick handling: Stop propagation to wrapper (so we don't 'bring to front' the current node redundantly) 
-                                // and trigger the jump. No onMouseDown needed.
+                                // Prevent wrapper's onMouseDown to avoid re-render race condition killing the click.
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => { e.stopPropagation(); onJumpToEntity(fk.targetEntity); }}
                                 title={`Jump to Entity: ${fk.targetEntity}`}
                             >
@@ -184,11 +186,21 @@ export const EntityDetailsTable = ({
                                     }}
                                 >
                                     <div className="flex items-center gap-1 w-full">
-                                        <GripVertical size={12} className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <GripVertical 
+                                            size={12} 
+                                            // Stop propagation on drag handle to prevent wrapper MD event
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" 
+                                        />
                                         
                                         <div 
                                             className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
-                                            onClick={header.column.getToggleSortingHandler()}
+                                            // Stop propagation on sorting click area to prevent wrapper MD event
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            onClick={(e) => {
+                                                 header.column.getToggleSortingHandler()?.(e);
+                                                 onFocus?.(); // Manually trigger bring-to-front on sort click
+                                            }}
                                         >
                                             <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
                                             {{
@@ -200,8 +212,15 @@ export const EntityDetailsTable = ({
                                     
                                     {/* Resizer Handle */}
                                     <div
-                                        onMouseDown={header.getResizeHandler()}
-                                        onTouchStart={header.getResizeHandler()}
+                                        // Stop propagation on resizer to prevent wrapper MD event interfering with drag
+                                        onMouseDown={(e) => {
+                                            e.stopPropagation();
+                                            header.getResizeHandler()(e);
+                                        }}
+                                        onTouchStart={(e) => {
+                                            e.stopPropagation();
+                                            header.getResizeHandler()(e);
+                                        }}
                                         className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 ${
                                             header.column.getIsResizing() ? 'bg-primary w-1.5' : 'bg-transparent'
                                         }`}

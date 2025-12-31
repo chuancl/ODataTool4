@@ -344,19 +344,26 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         <div 
             // Important: 'nodrag' prevents ReactFlow from dragging the node when interacting with the table.
             // 'nowheel' prevents the canvas from zooming when scrolling the table.
-            // onMouseDown: STOP PROPAGATION to prevent dragging. Do NOT add active entity here (causes re-render race condition).
-            // onClick: Trigger addActiveEntity (Bring to Front) here. This is safe for links/sorting as they handle their own clicks first.
+            // onMouseDown: Stop propagation so we don't drag the node, AND triggers 'addActiveEntity' to bring node to front.
+            // onClick: Stop propagation so we DON'T trigger 'onNodeClick' (highlighting logic) in the parent graph.
             className="absolute left-[100%] top-0 ml-5 w-[850px] cursor-default z-[2000] animate-appearance-in nodrag nowheel"
             onMouseDown={(e) => {
-                e.stopPropagation(); 
+                e.stopPropagation(); // Block drag/selection of the underlying node
+                addActiveEntity(id); // Bring this entity stack to the top (Z-Index) immediately
             }}
             onClick={(e) => {
-                e.stopPropagation(); // Block 'highlight connected entities'
-                addActiveEntity(id); // Bring to front on CLICK
+                e.stopPropagation(); // Block 'highlight connected entities' logic
             }}
         >
             <div className="bg-content1 rounded-lg shadow-2xl border border-divider overflow-hidden flex flex-col max-h-[600px] ring-1 ring-black/5">
-                <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
+                <div 
+                    // Stop propagation of MouseDown here to prevent the Wrapper from re-rendering the whole table 
+                    // while interacting with buttons (which can cause button click events to be lost).
+                    // We must manually addActiveEntity on click to ensure z-index is correct after interaction.
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => addActiveEntity(id)}
+                    className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0"
+                >
                     <div className="flex items-center gap-3 font-bold text-default-700 text-sm">
                         <Database size={18} className="text-primary"/>
                         {data.label}
@@ -374,13 +381,14 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                 
                 <ScrollShadow className="flex-1 overflow-auto bg-content1" size={10}>
                         <EntityDetailsTable 
-                        properties={data.properties} 
-                        keys={data.keys} 
-                        getFkInfo={getForeignKeyInfo}
-                        onJumpToEntity={(name) => {
-                            // Link inside Table -> Jump AND Open Popover (Close current, open target)
-                            handleJumpToEntity(name, true);
-                        }}
+                            properties={data.properties} 
+                            keys={data.keys} 
+                            getFkInfo={getForeignKeyInfo}
+                            onJumpToEntity={(name) => {
+                                // Link inside Table -> Jump AND Open Popover (Close current, open target)
+                                handleJumpToEntity(name, true);
+                            }}
+                            onFocus={() => addActiveEntity(id)} // Pass focus callback for internal table interactives
                         />
                 </ScrollShadow>
                 
