@@ -537,50 +537,41 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   
-  // Throttle state
-  const lastDragTime = useRef(0);
-  const rafRef = useRef<number | null>(null);
+  // Throttle state removed
+  // const lastDragTime = useRef(0);
+  // const rafRef = useRef<number | null>(null);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
 
   // [REAL-TIME DRAG]
-  // 在拖拽过程中实时计算布局，带有节流保护（约30FPS）
+  // 移除节流，每次拖动直接计算
   const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, draggedNodes: Node[]) => {
-    const now = Date.now();
-    // 节流: 限制执行频率 (30ms 约等于 33FPS)，避免过高频率计算导致卡顿
-    if (now - lastDragTime.current < 30) {
-      return;
-    }
-    lastDragTime.current = now;
+    // 移除时间检测
+    // const now = Date.now();
+    // if (now - lastDragTime.current < 30) return;
+    // lastDragTime.current = now;
 
-    // 取消上一次未执行的 RAF，避免堆积
-    if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-    }
-
-    // 在下一次重绘前执行计算
-    rafRef.current = requestAnimationFrame(() => {
-        const currentNodes = nodesRef.current;
-        const currentEdges = edgesRef.current;
-        
-        // 1. 合并位置数据
-        const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
-        const mergedNodes = currentNodes.map(n => {
-            const dragged = draggedMap.get(n.id);
-            if (dragged) {
-                return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
-            }
-            return n;
-        });
-
-        // 2. 重新计算布局 (Handle位置和连接方向)
-        const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
-        
-        // 3. 更新状态
-        setNodes(newNodes);
-        setEdges(newEdges); 
+    // 移除 RAF，直接执行
+    const currentNodes = nodesRef.current;
+    const currentEdges = edgesRef.current;
+    
+    // 1. 合并位置数据
+    const draggedMap = new Map(draggedNodes.map(n => [n.id, n]));
+    const mergedNodes = currentNodes.map(n => {
+        const dragged = draggedMap.get(n.id);
+        if (dragged) {
+            return { ...n, position: dragged.position, positionAbsolute: dragged.positionAbsolute };
+        }
+        return n;
     });
+
+    // 2. 重新计算布局 (Handle位置和连接方向)
+    const { nodes: newNodes, edges: newEdges } = calculateDynamicLayout(mergedNodes, currentEdges);
+    
+    // 3. 更新状态
+    setNodes(newNodes);
+    setEdges(newEdges); 
   }, [setNodes, setEdges]); 
 
   useEffect(() => {
