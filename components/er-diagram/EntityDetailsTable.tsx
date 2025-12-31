@@ -124,9 +124,15 @@ export const EntityDetailsTable = ({
                         <div className="flex items-center gap-0.5 overflow-hidden">
                             <span 
                                 className="font-bold text-secondary cursor-pointer hover:underline hover:text-secondary-600 truncate" 
-                                // Prevent wrapper's onMouseDown to avoid re-render race condition killing the click.
+                                // CRITICAL: Stop propagation on MouseDown ONLY for the link. 
+                                // This prevents the parent 'EntityNode' from seeing the mousedown and triggering 'addActiveEntity',
+                                // which causes a re-render that might kill the subsequent Click event on this link.
                                 onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.stopPropagation(); onJumpToEntity(fk.targetEntity); }}
+                                onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    onFocus?.(); // Manually ensure we come to front on click
+                                    onJumpToEntity(fk.targetEntity); 
+                                }}
                                 title={`Jump to Entity: ${fk.targetEntity}`}
                             >
                                 {fk.targetEntity}
@@ -188,19 +194,14 @@ export const EntityDetailsTable = ({
                                     <div className="flex items-center gap-1 w-full">
                                         <GripVertical 
                                             size={12} 
-                                            // Stop propagation on drag handle to prevent wrapper MD event 
-                                            onMouseDown={(e) => e.stopPropagation()}
+                                            // Allow this to bubble or handle naturally. Dragging triggers drag events, not just mousedown.
                                             className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" 
                                         />
                                         
                                         <div 
                                             className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
-                                            // Stop propagation on sorting click area to prevent wrapper MD event
-                                            onMouseDown={(e) => e.stopPropagation()}
-                                            onClick={(e) => {
-                                                 header.column.getToggleSortingHandler()?.(e);
-                                                 onFocus?.(); // Manually trigger bring-to-front on sort click
-                                            }}
+                                            // ALLOW BUBBLING: Let the click on the header bubble up to the EntityNode wrapper to trigger "Bring to Front".
+                                            onClick={header.column.getToggleSortingHandler()}
                                         >
                                             <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
                                             {{
@@ -212,7 +213,7 @@ export const EntityDetailsTable = ({
                                     
                                     {/* Resizer Handle */}
                                     <div
-                                        // Stop propagation on resizer to prevent wrapper MD event interfering with drag
+                                        // Resizing is a drag operation that needs to be isolated from the parent drag logic
                                         onMouseDown={(e) => {
                                             e.stopPropagation();
                                             header.getResizeHandler()(e);

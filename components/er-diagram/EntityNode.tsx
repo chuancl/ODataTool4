@@ -357,11 +357,7 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
         >
             <div className="bg-content1 rounded-lg shadow-2xl border border-divider overflow-hidden flex flex-col max-h-[600px] ring-1 ring-black/5">
                 <div 
-                    // Stop propagation of MouseDown here to prevent the Wrapper from re-rendering the whole table 
-                    // while interacting with buttons (which can cause button click events to be lost).
-                    // We must manually addActiveEntity on click to ensure z-index is correct after interaction.
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => addActiveEntity(id)}
+                    // No stopPropagation onMouseDown here! Let it bubble to the wrapper to update Z-index.
                     className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0"
                 >
                     <div className="flex items-center gap-3 font-bold text-default-700 text-sm">
@@ -385,10 +381,10 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             keys={data.keys} 
                             getFkInfo={getForeignKeyInfo}
                             onJumpToEntity={(name) => {
-                                // Link inside Table -> Jump AND Open Popover (Close current, open target) 
+                                // Link inside Table -> Jump AND Open Popover (Close current, open target)
                                 handleJumpToEntity(name, true);
                             }}
-                            onFocus={() => addActiveEntity(id)} // Pass focus callback for internal table interactives
+                            onFocus={() => addActiveEntity(id)} 
                         />
                 </ScrollShadow>
                 
