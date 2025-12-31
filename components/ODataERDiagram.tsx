@@ -246,7 +246,9 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
             markerStart: { type: MarkerType.ArrowClosed, color: e.color },
             markerEnd: { type: MarkerType.ArrowClosed, color: e.color },
             animated: false,
-            style: { stroke: e.color, strokeWidth: 1.5, opacity: 0.8 },
+            // UPDATED: strokeWidth 2, interactionWidth 20
+            style: { stroke: e.color, strokeWidth: 2, opacity: 0.8 },
+            interactionWidth: 20,
             label: e.label,
             labelStyle: { fill: e.color, fontWeight: 700, fontSize: 10 },
             labelBgStyle: { fill: '#ffffff', fillOpacity: 0.7, rx: 4, ry: 4 },
@@ -307,7 +309,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
           setEdges((eds) => eds.map(e => ({
               ...e, 
               animated: false, 
-              style: { stroke: e.data?.originalColor, strokeWidth: 1.5, opacity: 0.8 }, 
+              // UPDATED: strokeWidth 2
+              style: { stroke: e.data?.originalColor, strokeWidth: 2, opacity: 0.8 }, 
               markerStart: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               markerEnd: { type: MarkerType.ArrowClosed, color: e.data?.originalColor },
               labelStyle: { ...e.labelStyle, fill: e.data?.originalColor, opacity: 1 },
@@ -340,7 +343,8 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
               style: { 
                   ...e.style, 
                   stroke: color,
-                  strokeWidth: isVisible ? 2.5 : 1,
+                  // UPDATED: strokeWidth 4 for highlighted
+                  strokeWidth: isVisible ? 4 : 1,
                   opacity: isVisible ? 1 : 0.05, 
                   zIndex: isVisible ? 10 : 0
               },
