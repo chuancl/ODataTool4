@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo, useContext } from 'react';
 import ReactFlow, { 
   Controls, 
   Background, 
@@ -18,10 +18,17 @@ import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { parseMetadataToSchema, EntityProperty } from '@/utils/odata-helper';
 import { Button, Spinner, Popover, PopoverTrigger, PopoverContent, ScrollShadow, Divider, Chip, Switch } from "@nextui-org/react";
-import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive, GripVertical } from 'lucide-react';
+import { Key, Link2, Info, X, ChevronDown, ChevronUp, ArrowRightCircle, Table2, Database, Zap, ArrowUpDown, AlignJustify, Hash, CaseSensitive, GripVertical, Download } from 'lucide-react';
 import { useReactTable, getCoreRowModel, getSortedRowModel, flexRender, createColumnHelper, SortingState, ColumnOrderState } from '@tanstack/react-table';
 
 const elk = new ELK();
+
+// --- Context for Managing Active Popover State ---
+type DiagramContextType = {
+  activeEntityId: string | null;
+  setActiveEntityId: (id: string | null) => void;
+};
+const DiagramContext = React.createContext<DiagramContextType>({ activeEntityId: null, setActiveEntityId: () => {} });
 
 // 生成字符串 Hash
 const generateHashCode = (str: string) => {
@@ -49,6 +56,95 @@ interface DynamicHandleConfig {
 }
 
 // --------------------------------------------------------
+// Helper: Calculate Dynamic Layout (Handles & Edges)
+// --------------------------------------------------------
+const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
+  // Deep copy nodes to avoid mutating state directly during calculation
+  const nextNodes = nodes.map(n => ({
+    ...n,
+    data: { ...n.data, dynamicHandles: [] as DynamicHandleConfig[] }
+  }));
+  const nextEdges = [...edges];
+
+  const nodeMap = new Map(nextNodes.map(n => [n.id, n]));
+
+  nextEdges.forEach(edge => {
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    if (!sourceNode || !targetNode) return;
+
+    // Calculate centers
+    const sx = sourceNode.position.x + (sourceNode.width ?? 250) / 2;
+    const sy = sourceNode.position.y + (sourceNode.height ?? 200) / 2;
+    const tx = targetNode.position.x + (targetNode.width ?? 250) / 2;
+    const ty = targetNode.position.y + (targetNode.height ?? 200) / 2;
+
+    const dx = tx - sx;
+    const dy = ty - sy;
+
+    // Determine Handle Position
+    let sourcePos = Position.Right;
+    let targetPos = Position.Left;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 0) {
+            sourcePos = Position.Right;
+            targetPos = Position.Left;
+        } else {
+            sourcePos = Position.Left;
+            targetPos = Position.Right;
+        }
+    } else {
+        if (dy > 0) {
+            sourcePos = Position.Bottom;
+            targetPos = Position.Top;
+        } else {
+            sourcePos = Position.Top;
+            targetPos = Position.Bottom;
+        }
+    }
+
+    const sourceHandleId = `s-${edge.source}-${edge.target}-${edge.id}`;
+    const targetHandleId = `t-${edge.target}-${edge.source}-${edge.id}`;
+
+    sourceNode.data.dynamicHandles.push({
+        id: sourceHandleId,
+        type: 'source',
+        position: sourcePos,
+        offset: 50
+    });
+
+    targetNode.data.dynamicHandles.push({
+        id: targetHandleId,
+        type: 'target',
+        position: targetPos,
+        offset: 50
+    });
+
+    edge.sourceHandle = sourceHandleId;
+    edge.targetHandle = targetHandleId;
+  });
+
+  // Distribute handles
+  nextNodes.forEach(node => {
+     const handles = node.data.dynamicHandles as DynamicHandleConfig[];
+     const groups: Record<string, DynamicHandleConfig[]> = {
+         [Position.Top]: [], [Position.Bottom]: [], [Position.Left]: [], [Position.Right]: []
+     };
+     handles.forEach(h => groups[h.position]?.push(h));
+     
+     Object.values(groups).forEach(group => {
+         if (group && group.length > 0) {
+             const step = 100 / (group.length + 1);
+             group.forEach((h, i) => h.offset = step * (i + 1));
+         }
+     });
+  });
+
+  return { nodes: nextNodes, edges: nextEdges };
+};
+
+// --------------------------------------------------------
 // Sub-Component: Entity Details Table
 // --------------------------------------------------------
 const EntityDetailsTable = ({ 
@@ -74,13 +170,13 @@ const EntityDetailsTable = ({
             id: 'name',
             header: 'Field',
             enableSorting: true,
-            minSize: 100,
+            minSize: 110,
             cell: info => {
                 const isKey = keys.includes(info.getValue());
                 return (
                     <div className="flex items-center gap-2">
-                        {isKey ? <Key size={12} className="text-warning shrink-0" /> : <div className="w-3" />}
-                        <span className={isKey ? "font-bold text-foreground" : "text-default-700"}>
+                        {isKey ? <Key size={14} className="text-warning shrink-0" /> : <div className="w-3.5" />}
+                        <span className={`${isKey ? "font-bold text-foreground" : "text-default-700"} text-xs`}>
                             {info.getValue()}
                         </span>
                     </div>
@@ -93,8 +189,8 @@ const EntityDetailsTable = ({
             id: 'type',
             header: 'Type',
             enableSorting: true,
-            size: 80,
-            cell: info => <span className="font-mono text-[10px] text-primary/80">{info.getValue().split('.').pop()}</span>
+            size: 100,
+            cell: info => <span className="font-mono text-xs text-primary/80">{info.getValue().split('.').pop()}</span>
         }),
 
         // 3. Size/Precision Column
@@ -102,12 +198,12 @@ const EntityDetailsTable = ({
             id: 'size',
             header: 'Size',
             enableSorting: true,
-            size: 60,
+            size: 70,
             cell: info => {
                 const p = info.row.original;
-                if (p.maxLength) return <span className="font-mono text-[10px] text-default-500">{p.maxLength}</span>;
-                if (p.precision) return <span className="font-mono text-[10px] text-default-500">{p.precision}{p.scale !== undefined ? `,${p.scale}` : ''}</span>;
-                return <span className="text-default-300 text-[10px]">-</span>;
+                if (p.maxLength) return <span className="font-mono text-xs text-default-500">{p.maxLength}</span>;
+                if (p.precision) return <span className="font-mono text-xs text-default-500">{p.precision}{p.scale !== undefined ? `,${p.scale}` : ''}</span>;
+                return <span className="text-default-300 text-xs">-</span>;
             }
         }),
 
@@ -116,31 +212,31 @@ const EntityDetailsTable = ({
             id: 'attributes',
             header: 'Attributes',
             enableSorting: false, 
-            size: 160,
+            size: 180,
             cell: info => {
                 const p = info.row.original;
                 return (
                     <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Nullable status */}
                         {!p.nullable && (
-                            <span title="Field is Required (Not Null)" className="px-1.5 py-0.5 rounded-[3px] bg-danger/10 text-danger text-[9px] font-semibold border border-danger/20">Required</span>
+                            <span title="Field is Required (Not Null)" className="px-1.5 py-0.5 rounded-[4px] bg-danger/10 text-danger text-[10px] font-semibold border border-danger/20">Required</span>
                         )}
                         
                         {/* Fixed Length */}
                         {p.fixedLength && (
-                             <span title="Fixed Length String/Binary" className="px-1.5 py-0.5 rounded-[3px] bg-default-100 text-default-600 text-[9px] font-medium border border-default-200">Fixed Length</span>
+                             <span title="Fixed Length String/Binary" className="px-1.5 py-0.5 rounded-[4px] bg-default-100 text-default-600 text-[10px] font-medium border border-default-200">Fixed Length</span>
                         )}
 
                         {/* Unicode Status */}
                         {p.unicode === false ? (
-                             <span title="Non-Unicode (ANSI)" className="px-1.5 py-0.5 rounded-[3px] bg-warning/10 text-warning-700 text-[9px] font-medium border border-warning/20">Non-Unicode</span>
+                             <span title="Non-Unicode (ANSI)" className="px-1.5 py-0.5 rounded-[4px] bg-warning/10 text-warning-700 text-[10px] font-medium border border-warning/20">Non-Unicode</span>
                         ) : (
-                             <span title="Unicode Enabled" className="px-1.5 py-0.5 rounded-[3px] bg-primary/5 text-primary/70 text-[9px] font-medium border border-primary/10">Unicode</span>
+                             <span title="Unicode Enabled" className="px-1.5 py-0.5 rounded-[4px] bg-primary/5 text-primary/70 text-[10px] font-medium border border-primary/10">Unicode</span>
                         )}
 
                         {/* Concurrency */}
                         {p.concurrencyMode === 'Fixed' && (
-                            <span title="Optimistic Concurrency Control" className="px-1.5 py-0.5 rounded-[3px] bg-success/10 text-success-700 text-[9px] font-medium border border-success/20">Concurrency</span>
+                            <span title="Optimistic Concurrency Control" className="px-1.5 py-0.5 rounded-[4px] bg-success/10 text-success-700 text-[10px] font-medium border border-success/20">Concurrency</span>
                         )}
                     </div>
                 );
@@ -152,21 +248,21 @@ const EntityDetailsTable = ({
             id: 'defaultValue',
             header: 'Default',
             enableSorting: true,
-            size: 80,
-            cell: info => info.getValue() ? <span className="font-mono text-[10px] bg-default-50 px-1 rounded border border-default-100 text-default-600 max-w-[80px] truncate block" title={info.getValue()}>{info.getValue()}</span> : <span className="text-default-200 text-[10px]">-</span>
+            size: 90,
+            cell: info => info.getValue() ? <span className="font-mono text-xs bg-default-50 px-1 rounded border border-default-100 text-default-600 max-w-[80px] truncate block" title={info.getValue()}>{info.getValue()}</span> : <span className="text-default-200 text-xs">-</span>
         }),
 
         // 6. Relation Column
         columnHelper.display({
             id: 'relation',
             header: 'Relation',
-            size: 180,
+            size: 200,
             cell: info => {
                 const fk = getFkInfo(info.row.original.name);
                 if (!fk) return null;
                 return (
-                    <div className="flex items-center gap-1 text-[10px] w-full group">
-                        <Link2 size={10} className="text-secondary shrink-0" />
+                    <div className="flex items-center gap-1 text-xs w-full group">
+                        <Link2 size={12} className="text-secondary shrink-0" />
                         <div className="flex items-center gap-0.5 overflow-hidden">
                             <span 
                                 className="font-bold text-secondary cursor-pointer hover:underline hover:text-secondary-600 truncate" 
@@ -206,7 +302,7 @@ const EntityDetailsTable = ({
                             {headerGroup.headers.map(header => (
                                 <th 
                                     key={header.id} 
-                                    className="relative p-2 py-2.5 text-[10px] font-bold text-default-500 uppercase tracking-wider select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
+                                    className="relative p-2 py-3 text-xs font-bold text-default-600 uppercase tracking-wider select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
                                     style={{ width: header.getSize() }}
                                     draggable={!header.isPlaceholder}
                                     onDragStart={(e) => {
@@ -230,7 +326,7 @@ const EntityDetailsTable = ({
                                     }}
                                 >
                                     <div className="flex items-center gap-1 w-full">
-                                        <GripVertical size={10} className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <GripVertical size={12} className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />
                                         
                                         <div 
                                             className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
@@ -238,8 +334,8 @@ const EntityDetailsTable = ({
                                         >
                                             <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
                                             {{
-                                                asc: <ChevronUp size={10} className="text-primary shrink-0" />,
-                                                desc: <ChevronDown size={10} className="text-primary shrink-0" />,
+                                                asc: <ChevronUp size={12} className="text-primary shrink-0" />,
+                                                desc: <ChevronDown size={12} className="text-primary shrink-0" />,
                                             }[header.column.getIsSorted() as string] ?? null}
                                         </div>
                                     </div>
@@ -268,7 +364,7 @@ const EntityDetailsTable = ({
                             `}
                         >
                             {row.getVisibleCells().map(cell => (
-                                <td key={cell.id} className="p-2 text-[11px] h-9 border-r border-divider/20 last:border-r-0 align-middle overflow-hidden text-ellipsis">
+                                <td key={cell.id} className="p-2 text-xs h-10 border-r border-divider/20 last:border-r-0 align-middle overflow-hidden text-ellipsis">
                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                 </td>
                             ))}
@@ -276,99 +372,10 @@ const EntityDetailsTable = ({
                     ))}
                 </tbody>
             </table>
-            {properties.length === 0 && <div className="p-8 text-center text-xs text-default-400">No properties found for this entity.</div>}
+            {properties.length === 0 && <div className="p-8 text-center text-sm text-default-400">No properties found for this entity.</div>}
         </div>
     );
 };
-
-// --------------------------------------------------------
-// Core Logic: 动态布局计算函数
-// --------------------------------------------------------
-const calculateDynamicLayout = (nodes: Node[], edges: Edge[]) => {
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
-  const connections: Record<string, Record<string, any[]>> = {};
-
-  nodes.forEach(n => {
-    connections[n.id] = {
-        [Position.Top]: [], [Position.Right]: [], [Position.Bottom]: [], [Position.Left]: []
-    };
-  });
-
-  const updatedEdges = edges.map(edge => {
-      const sourceNode = nodeMap.get(edge.source);
-      const targetNode = nodeMap.get(edge.target);
-      if (!sourceNode || !targetNode) return { ...edge };
-
-      const sW = sourceNode.width || 250;
-      const sH = sourceNode.height || 200;
-      const tW = targetNode.width || 250;
-      const tH = targetNode.height || 200;
-
-      const sx = sourceNode.position.x + sW / 2;
-      const sy = sourceNode.position.y + sH / 2;
-      const tx = targetNode.position.x + tW / 2;
-      const ty = targetNode.position.y + tH / 2;
-
-      const dx = tx - sx;
-      const dy = ty - sy;
-      
-      let sourcePos: Position, targetPos: Position;
-      if (Math.abs(dx) > Math.abs(dy)) {
-          sourcePos = dx > 0 ? Position.Right : Position.Left;
-          targetPos = dx > 0 ? Position.Left : Position.Right;
-      } else {
-          sourcePos = dy > 0 ? Position.Bottom : Position.Top;
-          targetPos = dy > 0 ? Position.Top : Position.Bottom;
-      }
-
-      connections[sourceNode.id]?.[sourcePos]?.push({
-          edgeId: edge.id, type: 'source', otherX: tx, otherY: ty
-      });
-
-      connections[targetNode.id]?.[targetPos]?.push({
-          edgeId: edge.id, type: 'target', otherX: sx, otherY: sy
-      });
-
-      return { ...edge };
-  });
-
-  const updatedNodes = nodes.map(node => {
-      const dynamicHandles: DynamicHandleConfig[] = [];
-      const nodeConns = connections[node.id];
-
-      if (nodeConns) {
-          Object.values(Position).forEach(pos => {
-              const list = nodeConns[pos];
-              if (list && list.length > 0) {
-                  list.sort((a, b) => {
-                      if (pos === Position.Top || pos === Position.Bottom) return a.otherX - b.otherX;
-                      else return a.otherY - b.otherY;
-                  });
-
-                  list.forEach((conn, index) => {
-                      const count = list.length;
-                      const offset = ((index + 1) * 100) / (count + 1);
-                      const handleId = `${conn.edgeId}-${conn.type}`;
-                      
-                      dynamicHandles.push({
-                          id: handleId, type: conn.type, position: pos, offset: offset
-                      });
-
-                      const edge = updatedEdges.find((e: any) => e.id === conn.edgeId);
-                      if (edge) {
-                          if (conn.type === 'source') edge.sourceHandle = handleId;
-                          else edge.targetHandle = handleId;
-                      }
-                  });
-              }
-          });
-      }
-      return { ...node, data: { ...node.data, dynamicHandles } };
-  });
-
-  return { nodes: updatedNodes, edges: updatedEdges };
-};
-
 
 // --------------------------------------------------------
 // Component: EntityNode
@@ -377,7 +384,15 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
   const updateNodeInternals = useUpdateNodeInternals();
   const { fitView, getNodes } = useReactFlow();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [showEntityDetails, setShowEntityDetails] = useState(false);
+  const { activeEntityId, setActiveEntityId } = useContext(DiagramContext);
+
+  // Determine if this entity popover should be open
+  const showEntityDetails = activeEntityId === id;
+
+  const setShowEntityDetails = (open: boolean) => {
+    if (open) setActiveEntityId(id);
+    else if (activeEntityId === id) setActiveEntityId(null);
+  };
 
   // 监听 Handles 变化
   const dynamicHandles: DynamicHandleConfig[] = data.dynamicHandles || [];
@@ -391,19 +406,40 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
     return () => clearTimeout(timer);
   }, [isExpanded, id, updateNodeInternals]);
 
-  // 处理导航跳转
+  // 处理导航跳转 - 核心逻辑：Fit View + Update Context
   const handleJumpToEntity = useCallback((targetEntityName: string) => {
     const nodes = getNodes();
     const targetNode = nodes.find(n => n.id === targetEntityName);
 
     if (targetNode) {
+      // 1. Zoom to node
       fitView({
         nodes: [{ id: targetEntityName }],
         padding: 0.5,
-        duration: 1000,
+        duration: 800,
       });
+      // 2. Open target popover (closes current one automatically via Context)
+      setTimeout(() => setActiveEntityId(targetEntityName), 100); 
     }
-  }, [getNodes, fitView]);
+  }, [getNodes, fitView, setActiveEntityId]);
+
+  // Export CSV Function
+  const handleExportCSV = () => {
+    const headers = ['Name', 'Type', 'Nullable', 'MaxLength', 'Precision', 'Scale', 'Unicode', 'FixedLength', 'DefaultValue', 'ConcurrencyMode'];
+    const rows = data.properties.map((p: EntityProperty) => [
+      p.name, p.type, p.nullable, p.maxLength, p.precision, p.scale, p.unicode, p.fixedLength, p.defaultValue, p.concurrencyMode
+    ].map((v: any) => v === undefined || v === null ? '' : String(v)));
+
+    const csvContent = [headers.join(','), ...rows.map((r: any[]) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${data.label}_Schema.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // 查找某个属性是否是外键，并返回关联信息
   const getForeignKeyInfo = useCallback((propName: string) => {
@@ -479,21 +515,26 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                 </span>
             </PopoverTrigger>
             <PopoverContent 
-                className="w-[800px] p-0" 
+                className="w-[850px] p-0" 
                 // 防止 Popover 内部点击冒泡导致 ReactFlow 画布暗化
                 onMouseDown={(e) => e.stopPropagation()} 
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="bg-content1 rounded-lg shadow-lg border border-divider overflow-hidden flex flex-col max-h-[600px]">
                     <div className="flex justify-between items-center p-3 bg-default-100 border-b border-divider shrink-0">
-                        <div className="flex items-center gap-2 font-bold text-default-700">
-                            <Database size={16} className="text-primary"/>
+                        <div className="flex items-center gap-3 font-bold text-default-700 text-sm">
+                            <Database size={18} className="text-primary"/>
                             {data.label}
-                            <span className="text-[10px] font-normal text-default-400 bg-white px-1 rounded border border-divider">{data.namespace}</span>
+                            <span className="text-xs font-normal text-default-500 bg-white px-1.5 rounded border border-divider">{data.namespace}</span>
                         </div>
-                        <Button isIconOnly size="sm" variant="light" onPress={() => setShowEntityDetails(false)}>
-                            <X size={16} />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                           <Button size="sm" variant="flat" color="primary" onPress={handleExportCSV} startContent={<Download size={14} />}>
+                              Export CSV
+                           </Button>
+                           <Button isIconOnly size="sm" variant="light" onPress={() => setShowEntityDetails(false)}>
+                               <X size={18} />
+                           </Button>
+                        </div>
                     </div>
                     
                     <ScrollShadow className="flex-1 overflow-auto bg-content1" size={10}>
@@ -503,12 +544,11 @@ const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
                             getFkInfo={getForeignKeyInfo}
                             onJumpToEntity={(name) => {
                                 handleJumpToEntity(name);
-                                // Optional: Close popover on jump? setShowEntityDetails(false);
                             }}
                          />
                     </ScrollShadow>
                     
-                    <div className="bg-default-50 p-2 text-[10px] text-default-400 text-center border-t border-divider shrink-0 flex justify-between px-4">
+                    <div className="bg-default-50 p-2 text-xs text-default-500 text-center border-t border-divider shrink-0 flex justify-between px-4">
                         <span>{data.properties.length} Properties</span>
                         <span>{data.navigationProperties?.length || 0} Relations</span>
                     </div>
@@ -728,6 +768,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
   const [isPerformanceMode, setIsPerformanceMode] = useState(false); // 默认关闭性能模式
+  const [activeEntityId, setActiveEntityId] = useState<string | null>(null); // Global Active Entity for Popovers
 
   // 用于管理高亮节点 ID 的集合
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
@@ -955,6 +996,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
   // 监听 background 点击，重置视图
   const onPaneClick = useCallback(() => {
       setHighlightedIds(new Set());
+      setActiveEntityId(null); // Close any active popover
   }, []);
 
   // 监听 highlightedIds 变化，批量更新节点和边的样式
@@ -1014,6 +1056,7 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
 
   const resetView = () => {
      setHighlightedIds(new Set());
+     setActiveEntityId(null);
   };
 
   return (
@@ -1043,24 +1086,27 @@ const ODataERDiagramContent: React.FC<Props> = ({ url }) => {
         <Button size="sm" color="primary" variant="flat" onPress={resetView}>重置视图</Button>
       </div>
       
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStop={onNodeDragStop}
-        nodeTypes={nodeTypes}
-        onNodeClick={onNodeClick}
-        onPaneClick={onPaneClick}
-        fitView
-        attributionPosition="bottom-right"
-        minZoom={0.1}
-        maxZoom={1.5}
-      >
-        <Controls className="bg-content1 border border-divider shadow-sm" />
-        <Background color="#888" gap={24} size={1} />
-      </ReactFlow>
+      {/* Provide DiagramContext to all Nodes */}
+      <DiagramContext.Provider value={{ activeEntityId, setActiveEntityId }}>
+        <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
+            nodeTypes={nodeTypes}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            fitView
+            attributionPosition="bottom-right"
+            minZoom={0.1}
+            maxZoom={1.5}
+        >
+            <Controls className="bg-content1 border border-divider shadow-sm" />
+            <Background color="#888" gap={24} size={1} />
+        </ReactFlow>
+      </DiagramContext.Provider>
     </div>
   );
 };

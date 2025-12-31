@@ -22,10 +22,17 @@ const App: React.FC = () => {
       const targetUrl = decodeURIComponent(hash.split('url=')[1]);
       setUrl(targetUrl);
       validateAndLoad(targetUrl);
-    } else {
-      // 默认尝试读取一次 clipboard 或者 storage? 暂时留空
     }
   }, []);
+
+  // Sync Dark Mode to HTML root for Portals/Popovers support
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDark]);
 
   const validateAndLoad = async (targetUrl: string) => {
     if (!targetUrl) return;
@@ -39,7 +46,7 @@ const App: React.FC = () => {
 
   return (
     <NextUIProvider>
-      <div className={`${isDark ? 'dark' : ''} text-foreground bg-background h-screen w-screen flex flex-col overflow-hidden font-sans antialiased`}>
+      <div className="text-foreground bg-background h-screen w-screen flex flex-col overflow-hidden font-sans antialiased">
         
         {/* 顶部导航栏 */}
         <nav className="h-16 border-b border-divider px-6 flex items-center justify-between bg-content1 shrink-0 z-50 shadow-sm gap-4">
