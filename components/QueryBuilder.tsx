@@ -2,11 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Input, Button, Select, SelectItem, Checkbox, 
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Selection, Chip, Tabs, Tab
+  Selection, Chip, Tabs, Tab, Divider
 } from "@nextui-org/react";
 import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 import { generateSAPUI5Code, ODataVersion, ParsedSchema, EntityType } from '@/utils/odata-helper';
-import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download } from 'lucide-react';
+import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download, CheckSquare } from 'lucide-react';
 
 // Code Mirror & Formatting Imports
 import CodeMirror from '@uiw/react-codemirror';
@@ -47,6 +47,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const [codePreview, setCodePreview] = useState('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
 
+  const ALL_KEY = '_ALL_';
+
   // 1. 初始化：使用传入的 Schema 填充 EntitySets
   useEffect(() => {
     if (!schema) return;
@@ -78,32 +80,107 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       }
 
       // 2. Fallback: 模糊匹配 Entity 名称
-      // 尝试匹配 EntitySet 名称和 EntityType 名称
       let match = schema.entities.find(s => s.name === selectedEntity);
-      // 尝试去 's' (简单的单数化匹配，例如 Sets: Products -> Type: Product)
       if (!match && selectedEntity.endsWith('s')) {
           const singular = selectedEntity.slice(0, -1);
           match = schema.entities.find(s => s.name === singular);
       }
-      // 尝试包含匹配
       if (!match) {
           match = schema.entities.find(s => selectedEntity.includes(s.name));
       }
       return match;
   }, [selectedEntity, schema]);
 
-  // Expand Options Helper
-  const expandOptions = useMemo(() => {
+  // --- Select 字段下拉列表逻辑 ---
+  const selectItems = useMemo(() => {
     if (!currentSchema) return [];
-    if (currentSchema.navigationProperties.length === 0) {
-        return [{ id: 'none', name: '无关联实体', targetType: '', isPlaceholder: true }];
-    }
-    return currentSchema.navigationProperties.map(nav => ({
-        ...nav,
-        id: nav.name,
-        isPlaceholder: false
-    }));
+    // 添加全选选项
+    return [
+        { name: ALL_KEY, type: 'Special', label: '全选 (Select All)' },
+        ...currentSchema.properties.map(p => ({ ...p, label: p.name }))
+    ];
   }, [currentSchema]);
+
+  const currentSelectKeys = useMemo(() => {
+    const selected = new Set(select ? select.split(',') : []);
+    // 如果所有真实属性都被选中，则自动添加“全选”标记，让其显示为勾选状态
+    if (currentSchema && currentSchema.properties.length > 0 && selected.size === currentSchema.properties.length) {
+        selected.add(ALL_KEY);
+    }
+    return selected;
+  }, [select, currentSchema]);
+
+  const handleSelectChange = (keys: Selection) => {
+    if (!currentSchema) return;
+    const newSet = new Set(keys);
+    const allProps = currentSchema.properties.map(p => p.name);
+
+    // 逻辑：判断是否点击了“全选”
+    const wasAllSelected = currentSelectKeys.has(ALL_KEY);
+    const isAllSelected = newSet.has(ALL_KEY);
+
+    if (isAllSelected && !wasAllSelected) {
+        // 用户勾选了“全选” -> 选中所有
+        setSelect(allProps.join(','));
+    } else if (!isAllSelected && wasAllSelected) {
+        // 用户取消勾选了“全选” -> 清空
+        setSelect('');
+    } else {
+        // 用户操作了普通项 (或者在全选状态下取消了某个普通项)
+        // 移除 ALL_KEY 标记，只保留真实字段
+        newSet.delete(ALL_KEY);
+        setSelect(Array.from(newSet).join(','));
+    }
+  };
+
+  // --- Expand 字段下拉列表逻辑 ---
+  const expandItems = useMemo(() => {
+    if (!currentSchema) return [];
+    // 如果没有导航属性，返回空提示
+    if (currentSchema.navigationProperties.length === 0) {
+        return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined }];
+    }
+    // 添加全选选项
+    return [
+        { name: ALL_KEY, type: 'Special', label: '全选 (Expand All)', targetType: undefined },
+        ...currentSchema.navigationProperties.map(nav => ({
+            name: nav.name,
+            label: nav.name,
+            type: 'nav',
+            targetType: nav.targetType
+        }))
+    ];
+  }, [currentSchema]);
+
+  const currentExpandKeys = useMemo(() => {
+    const selected = new Set(expand ? expand.split(',') : []);
+    if (currentSchema && currentSchema.navigationProperties.length > 0 && selected.size === currentSchema.navigationProperties.length) {
+        selected.add(ALL_KEY);
+    }
+    return selected;
+  }, [expand, currentSchema]);
+
+  const handleExpandChange = (keys: Selection) => {
+    if (!currentSchema) return;
+    const newSet = new Set(keys);
+    const allNavs = currentSchema.navigationProperties.map(n => n.name);
+
+    // 过滤掉 placeholder
+    if (newSet.has('none')) newSet.delete('none');
+
+    const wasAllSelected = currentExpandKeys.has(ALL_KEY);
+    const isAllSelected = newSet.has(ALL_KEY);
+
+    if (isAllSelected && !wasAllSelected) {
+        setExpand(allNavs.join(','));
+    } else if (!isAllSelected && wasAllSelected) {
+        setExpand('');
+    } else {
+        newSet.delete(ALL_KEY);
+        setExpand(Array.from(newSet).join(','));
+    }
+  };
+
 
   // 2. 监听参数变化：自动生成 OData URL
   useEffect(() => {
@@ -130,7 +207,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
   }, [url, selectedEntity, filter, select, expand, top, skip, count, version]);
 
-  // 3. 执行查询 (这里的 fetch 必须保留，因为是实际执行查询)
+  // 3. 执行查询
   const executeQuery = async () => {
     setLoading(true);
     setRawXmlResult('// 正在加载 XML...');
@@ -268,21 +345,32 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
                 label="字段 ($select)"
                 placeholder="选择返回字段"
                 selectionMode="multiple"
-                selectedKeys={new Set(select ? select.split(',') : [])}
-                onSelectionChange={(keys) => setSelect(Array.from(keys).join(','))}
+                selectedKeys={currentSelectKeys}
+                onSelectionChange={handleSelectChange}
                 size="sm"
                 variant="bordered"
                 classNames={{ value: "text-xs" }}
-                items={currentSchema.properties}
+                items={selectItems}
              >
-                {(p) => (
-                    <SelectItem key={p.name} value={p.name} textValue={p.name}>
-                        <div className="flex flex-col">
-                            <span className="text-small">{p.name}</span>
-                            <span className="text-tiny text-default-400">{p.type.split('.').pop()}</span>
-                        </div>
-                    </SelectItem>
-                )}
+                {(item) => {
+                    if (item.type === 'Special') {
+                        return (
+                            <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
+                                <div className="flex items-center gap-2">
+                                    <CheckSquare size={14} /> {item.label}
+                                </div>
+                            </SelectItem>
+                        );
+                    }
+                    return (
+                        <SelectItem key={item.name} value={item.name} textValue={item.name}>
+                            <div className="flex flex-col">
+                                <span className="text-small">{item.name}</span>
+                                <span className="text-tiny text-default-400">{item.type.split('.').pop()}</span>
+                            </div>
+                        </SelectItem>
+                    );
+                }}
              </Select>
           ) : (
              <Input label="字段 ($select)" placeholder="例如: Name,Price" value={select} onValueChange={setSelect} size="sm" variant="bordered" />
@@ -294,25 +382,35 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
                 label="展开 ($expand)"
                 placeholder="选择关联实体"
                 selectionMode="multiple"
-                selectedKeys={new Set(expand ? expand.split(',') : [])}
-                onSelectionChange={(keys) => setExpand(Array.from(keys).filter(k => k !== 'none').join(','))}
+                selectedKeys={currentExpandKeys}
+                onSelectionChange={handleExpandChange}
                 size="sm"
                 variant="bordered"
                 classNames={{ value: "text-xs" }}
-                items={expandOptions}
+                items={expandItems}
              >
-                 {(item) => (
-                    <SelectItem key={item.id} value={item.name} textValue={item.name} isReadOnly={item.isPlaceholder}>
-                        {item.isPlaceholder ? (
-                            "无关联实体"
-                        ) : (
+                 {(item) => {
+                     if (item.type === 'Special') {
+                         return (
+                            <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
+                                <div className="flex items-center gap-2">
+                                    <CheckSquare size={14} /> {item.label}
+                                </div>
+                            </SelectItem>
+                         );
+                     }
+                     if (item.type === 'placeholder') {
+                         return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
+                     }
+                     return (
+                        <SelectItem key={item.name} value={item.name} textValue={item.name}>
                             <div className="flex flex-col">
                                 <span className="text-small">{item.name}</span>
                                 <span className="text-tiny text-default-400">To: {item.targetType?.split('.').pop()}</span>
                             </div>
-                        )}
-                    </SelectItem>
-                 )}
+                        </SelectItem>
+                     );
+                 }}
              </Select>
           ) : (
              <Input label="展开 ($expand)" placeholder="例如: Category" value={expand} onValueChange={setExpand} size="sm" variant="bordered" />
