@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { Input, Select, SelectItem, Checkbox, Selection, Button } from "@nextui-org/react";
-import { CheckSquare, ArrowDownAz, ArrowUpZa, CornerDownRight } from 'lucide-react';
+import { Input, Select, SelectItem, Checkbox, Selection, Button, ListboxSection } from "@nextui-org/react";
+import { CheckSquare, ArrowDownAz, ArrowUpZa, CornerDownRight, Link2 } from 'lucide-react';
 import { EntityType, ParsedSchema } from '@/utils/odata-helper';
 
 interface ParamsFormProps {
@@ -35,19 +35,84 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
 }) => {
     const ALL_KEY = '_ALL_';
 
+    // --- Helper: 解析 Expand 路径获取对应实体的属性 ---
+    const expandedEntityProperties = useMemo(() => {
+        if (!currentSchema || !schema || !expand) return [];
+        
+        const paths = expand.split(',').filter(p => p && p !== 'none');
+        const extraProps: any[] = [];
+
+        paths.forEach(path => {
+            let current = currentSchema;
+            const segments = path.split('/');
+            let isValidPath = true;
+
+            for (const segment of segments) {
+                const nav = current.navigationProperties.find(n => n.name === segment);
+                if (!nav) {
+                    isValidPath = false;
+                    break;
+                }
+                
+                let targetTypeName = nav.targetType;
+                if (targetTypeName?.startsWith('Collection(')) {
+                    targetTypeName = targetTypeName.slice(11, -1);
+                }
+                targetTypeName = targetTypeName?.split('.').pop() || "";
+                
+                const nextEntity = schema.entities.find(e => e.name === targetTypeName);
+                if (!nextEntity) {
+                    isValidPath = false;
+                    break;
+                }
+                current = nextEntity;
+            }
+
+            if (isValidPath && current) {
+                // 将该实体的所有属性加以前缀
+                extraProps.push(
+                    ...current.properties.map(p => ({
+                        ...p,
+                        name: `${path}/${p.name}`,
+                        label: `${path}/${p.name}`,
+                        originalName: p.name,
+                        sourcePath: path,
+                        type: p.type,
+                        isExpanded: true
+                    }))
+                );
+            }
+        });
+        
+        return extraProps;
+    }, [expand, currentSchema, schema]);
+
     // --- Select 字段逻辑 ---
     const selectItems = useMemo(() => {
         if (!currentSchema) return [];
-        return [
-            { name: ALL_KEY, type: 'Special', label: '全选 (Select All)' },
-            ...currentSchema.properties.map(p => ({ ...p, label: p.name }))
+        
+        const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
+        
+        // 如果有扩展字段，不需要“全选”逻辑（因为它通常只针对主实体），或者全选只选主实体
+        // 这里为了简单，保留全选作为“全选主实体字段”
+        const items = [
+            { name: ALL_KEY, type: 'Special', label: '全选主实体 (Select All Main)', isExpanded: false },
+            ...mainProps,
+            ...expandedEntityProperties
         ];
-    }, [currentSchema]);
+        
+        return items;
+    }, [currentSchema, expandedEntityProperties]);
 
     const currentSelectKeys = useMemo(() => {
         const selected = new Set(select ? select.split(',') : []);
-        if (currentSchema && currentSchema.properties.length > 0 && selected.size === currentSchema.properties.length) {
-            selected.add(ALL_KEY);
+        // 全选逻辑仅判断主实体属性是否都已选中
+        if (currentSchema) {
+            const mainPropNames = currentSchema.properties.map(p => p.name);
+            const allMainSelected = mainPropNames.length > 0 && mainPropNames.every(n => selected.has(n));
+            if (allMainSelected) {
+                selected.add(ALL_KEY);
+            }
         }
         return selected;
     }, [select, currentSchema]);
@@ -55,19 +120,30 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     const handleSelectChange = (keys: Selection) => {
         if (!currentSchema) return;
         const newSet = new Set(keys);
-        const allProps = currentSchema.properties.map(p => p.name);
+        const allMainProps = currentSchema.properties.map(p => p.name);
 
         const wasAllSelected = currentSelectKeys.has(ALL_KEY);
         const isAllSelected = newSet.has(ALL_KEY);
 
+        // 如果之前选中的包含了扩展属性，我们希望保留它们，除非用户手动反选
+        const currentExpandedSelected = select ? select.split(',').filter(s => s.includes('/')) : [];
+
+        let finalSelection: string[] = [];
+
         if (isAllSelected && !wasAllSelected) {
-            setSelect(allProps.join(','));
+            // 点击了全选 -> 选中所有主实体 + 保持已选的扩展属性
+            finalSelection = [...allMainProps, ...currentExpandedSelected];
         } else if (!isAllSelected && wasAllSelected) {
-            setSelect('');
+            // 取消了全选 -> 清空主实体 + 保持已选的扩展属性
+            finalSelection = [...currentExpandedSelected];
         } else {
+            // 普通选择
             newSet.delete(ALL_KEY);
-            setSelect(Array.from(newSet).join(','));
+            finalSelection = Array.from(newSet).map(String);
         }
+
+        // 去重并设置
+        setSelect(Array.from(new Set(finalSelection)).join(','));
     };
 
     // --- Expand 字段逻辑 (支持级联) ---
@@ -77,12 +153,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined, level: 0 }];
         }
 
-        // 递归查找级联路径的辅助函数
-        // entityName: 当前实体名
-        // parentPath: 父路径 (e.g., "Supplier")
-        // currentDepth: 当前深度
         const buildPaths = (entityName: string, parentPath: string, currentDepth: number): any[] => {
-            // 限制最大深度为 2 (Root -> Level 1 -> Level 2)，避免无限递归和 UI 过于复杂
             if (currentDepth >= 2) return [];
 
             const entity = schema.entities.find(e => e.name === entityName);
@@ -93,20 +164,17 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             for (const nav of entity.navigationProperties) {
                 const currentPath = parentPath ? `${parentPath}/${nav.name}` : nav.name;
                 
-                // 添加当前层级
                 results.push({
                     name: currentPath,
-                    label: nav.name, // 显示名只显示当前段，渲染时会有缩进
+                    label: nav.name,
                     fullPath: currentPath,
                     type: 'nav',
                     targetType: nav.targetType,
                     level: currentDepth
                 });
 
-                // 递归查找下一级
                 let targetTypeName = nav.targetType;
                 if (targetTypeName) {
-                    // 清理 EntityType 名称 (e.g., "Collection(Namespace.Type)" -> "Type")
                     if (targetTypeName.startsWith('Collection(')) {
                         targetTypeName = targetTypeName.slice(11, -1);
                     }
@@ -121,27 +189,25 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             return results;
         };
 
-        // 从当前实体开始构建，初始深度 0
         return buildPaths(currentSchema.name, "", 0);
     }, [currentSchema, schema]);
 
     const currentExpandKeys = useMemo(() => {
-        // Expand 只是简单的多选，不再有全选逻辑
         return new Set(expand ? expand.split(',') : []);
     }, [expand]);
 
     const handleExpandChange = (keys: Selection) => {
         const newSet = new Set(keys);
         if (newSet.has('none')) newSet.delete('none');
-        // 直接设置选中的路径字符串集合
         setExpand(Array.from(newSet).join(','));
     };
 
     // --- Sort 字段逻辑 ---
     const sortItems = useMemo(() => {
         if (!currentSchema) return [];
-        return currentSchema.properties.map(p => ({ ...p, label: p.name }));
-    }, [currentSchema]);
+        const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
+        return [...mainProps, ...expandedEntityProperties];
+    }, [currentSchema, expandedEntityProperties]);
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl bg-content1 shadow-sm border border-divider shrink-0">
@@ -178,7 +244,12 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             >
                                 {(p) => (
                                     <SelectItem key={p.name} value={p.name} textValue={p.name}>
-                                        {p.name}
+                                        <div className="flex items-center gap-2">
+                                            {p.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
+                                            <div className="flex flex-col">
+                                                <span className={`text-small ${p.isExpanded ? 'text-secondary' : ''}`}>{p.name}</span>
+                                            </div>
+                                        </div>
                                     </SelectItem>
                                 )}
                             </Select>
@@ -220,6 +291,17 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             variant="bordered"
                             classNames={{ value: "text-xs" }}
                             items={selectItems}
+                            renderValue={(items) => {
+                                return (
+                                    <div className="flex flex-wrap gap-1">
+                                        {items.map((item) => (
+                                            <span key={item.key} className="text-xs truncate max-w-[100px]">
+                                                {item.textValue}{items.length > 1 ? ',' : ''}
+                                            </span>
+                                        ))}
+                                    </div>
+                                );
+                            }}
                         >
                             {(item) => {
                                 if (item.type === 'Special') {
@@ -233,9 +315,15 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                                 }
                                 return (
                                     <SelectItem key={item.name} value={item.name} textValue={item.name}>
-                                        <div className="flex flex-col">
-                                            <span className="text-small">{item.name}</span>
-                                            <span className="text-tiny text-default-400">{item.type.split('.').pop()}</span>
+                                        <div className="flex items-center justify-between">
+                                             <div className="flex items-center gap-2">
+                                                {item.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
+                                                <div className="flex flex-col">
+                                                    <span className={`text-small ${item.isExpanded ? 'text-secondary' : ''}`}>{item.name}</span>
+                                                    <span className="text-tiny text-default-400">{item.type?.split('.').pop()}</span>
+                                                </div>
+                                             </div>
+                                             {item.isExpanded && <span className="text-[10px] text-default-300 ml-2 border border-divider px-1 rounded">Ext</span>}
                                         </div>
                                     </SelectItem>
                                 );
