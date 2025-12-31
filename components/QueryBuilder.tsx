@@ -1,20 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Input, Button, Select, SelectItem, Checkbox, 
-  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Selection, Chip, Tabs, Tab, Divider
-} from "@nextui-org/react";
-import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
-import { generateSAPUI5Code, ODataVersion, ParsedSchema, EntityType } from '@/utils/odata-helper';
-import { Copy, Play, Trash, Save, FileCode, Table as TableIcon, Braces, Download, CheckSquare, ArrowDownAz, ArrowUpZa } from 'lucide-react';
-
-// Code Mirror & Formatting Imports
-import CodeMirror from '@uiw/react-codemirror';
-import { json } from '@codemirror/lang-json';
-import { xml } from '@codemirror/lang-xml';
-import { vscodeDark } from '@uiw/codemirror-theme-vscode';
-import { githubLight } from '@uiw/codemirror-theme-github';
+import { useDisclosure, Selection } from "@nextui-org/react";
+import { generateSAPUI5Code, ODataVersion, ParsedSchema } from '@/utils/odata-helper';
 import xmlFormat from 'xml-formatter';
+
+import { ParamsForm } from './query-builder/ParamsForm';
+import { UrlBar } from './query-builder/UrlBar';
+import { ResultTabs } from './query-builder/ResultTabs';
+import { CodeModal } from './query-builder/CodeModal';
 
 interface Props {
   url: string;
@@ -39,24 +31,20 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   
   // 结果状态
   const [loading, setLoading] = useState(false);
-  const [queryResult, setQueryResult] = useState<any[]>([]); // 用于表格显示的数组
-  const [rawJsonResult, setRawJsonResult] = useState('');    // 原始 JSON 字符串
-  const [rawXmlResult, setRawXmlResult] = useState('');      // 原始 XML 字符串
+  const [queryResult, setQueryResult] = useState<any[]>([]); 
+  const [rawJsonResult, setRawJsonResult] = useState('');    
+  const [rawXmlResult, setRawXmlResult] = useState('');      
   const [generatedUrl, setGeneratedUrl] = useState('');
 
   // 模态框状态
-  const { isOpen, onOpen, onOpenChange } = useDisclosure(); // 代码生成模态框
+  const { isOpen, onOpen, onOpenChange } = useDisclosure(); 
   const [codePreview, setCodePreview] = useState('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
-
-  const ALL_KEY = '_ALL_';
 
   // 1. 初始化：使用传入的 Schema 填充 EntitySets
   useEffect(() => {
     if (!schema) return;
     
-    // 从 schema.entitySets 中提取名称
-    // 如果没有 entitySets (解析失败或没有), 尝试从 entities 名称推断 (fallback)
     let sets: string[] = [];
     if (schema.entitySets && schema.entitySets.length > 0) {
         sets = schema.entitySets.map(es => es.name);
@@ -72,16 +60,13 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const currentSchema = useMemo(() => {
       if (!selectedEntity || !schema || !schema.entities) return null;
       
-      // 1. 尝试从 EntitySets 映射中找到对应的 EntityType 名称
       const setInfo = schema.entitySets.find(es => es.name === selectedEntity);
       if (setInfo) {
-          // EntityType 可能是 "Namespace.Name" 或只是 "Name"
           const typeName = setInfo.entityType.split('.').pop();
           const matchedEntity = schema.entities.find(e => e.name === typeName);
           if (matchedEntity) return matchedEntity;
       }
 
-      // 2. Fallback: 模糊匹配 Entity 名称
       let match = schema.entities.find(s => s.name === selectedEntity);
       if (!match && selectedEntity.endsWith('s')) {
           const singular = selectedEntity.slice(0, -1);
@@ -92,103 +77,6 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       }
       return match;
   }, [selectedEntity, schema]);
-
-  // --- Select 字段下拉列表逻辑 ---
-  const selectItems = useMemo(() => {
-    if (!currentSchema) return [];
-    // 添加全选选项
-    return [
-        { name: ALL_KEY, type: 'Special', label: '全选 (Select All)' },
-        ...currentSchema.properties.map(p => ({ ...p, label: p.name }))
-    ];
-  }, [currentSchema]);
-
-  const currentSelectKeys = useMemo(() => {
-    const selected = new Set(select ? select.split(',') : []);
-    // 如果所有真实属性都被选中，则自动添加“全选”标记，让其显示为勾选状态
-    if (currentSchema && currentSchema.properties.length > 0 && selected.size === currentSchema.properties.length) {
-        selected.add(ALL_KEY);
-    }
-    return selected;
-  }, [select, currentSchema]);
-
-  const handleSelectChange = (keys: Selection) => {
-    if (!currentSchema) return;
-    const newSet = new Set(keys);
-    const allProps = currentSchema.properties.map(p => p.name);
-
-    // 逻辑：判断是否点击了“全选”
-    const wasAllSelected = currentSelectKeys.has(ALL_KEY);
-    const isAllSelected = newSet.has(ALL_KEY);
-
-    if (isAllSelected && !wasAllSelected) {
-        // 用户勾选了“全选” -> 选中所有
-        setSelect(allProps.join(','));
-    } else if (!isAllSelected && wasAllSelected) {
-        // 用户取消勾选了“全选” -> 清空
-        setSelect('');
-    } else {
-        // 用户操作了普通项 (或者在全选状态下取消了某个普通项)
-        // 移除 ALL_KEY 标记，只保留真实字段
-        newSet.delete(ALL_KEY);
-        setSelect(Array.from(newSet).join(','));
-    }
-  };
-
-  // --- Sort 字段下拉列表 (复用 schema properties) ---
-  const sortItems = useMemo(() => {
-    if (!currentSchema) return [];
-    return currentSchema.properties.map(p => ({ ...p, label: p.name }));
-  }, [currentSchema]);
-
-
-  // --- Expand 字段下拉列表逻辑 ---
-  const expandItems = useMemo(() => {
-    if (!currentSchema) return [];
-    // 如果没有导航属性，返回空提示
-    if (currentSchema.navigationProperties.length === 0) {
-        return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined }];
-    }
-    // 添加全选选项
-    return [
-        { name: ALL_KEY, type: 'Special', label: '全选 (Expand All)', targetType: undefined },
-        ...currentSchema.navigationProperties.map(nav => ({
-            name: nav.name,
-            label: nav.name,
-            type: 'nav',
-            targetType: nav.targetType
-        }))
-    ];
-  }, [currentSchema]);
-
-  const currentExpandKeys = useMemo(() => {
-    const selected = new Set(expand ? expand.split(',') : []);
-    if (currentSchema && currentSchema.navigationProperties.length > 0 && selected.size === currentSchema.navigationProperties.length) {
-        selected.add(ALL_KEY);
-    }
-    return selected;
-  }, [expand, currentSchema]);
-
-  const handleExpandChange = (keys: Selection) => {
-    if (!currentSchema) return;
-    const newSet = new Set(keys);
-    const allNavs = currentSchema.navigationProperties.map(n => n.name);
-
-    // 过滤掉 placeholder
-    if (newSet.has('none')) newSet.delete('none');
-
-    const wasAllSelected = currentExpandKeys.has(ALL_KEY);
-    const isAllSelected = newSet.has(ALL_KEY);
-
-    if (isAllSelected && !wasAllSelected) {
-        setExpand(allNavs.join(','));
-    } else if (!isAllSelected && wasAllSelected) {
-        setExpand('');
-    } else {
-        newSet.delete(ALL_KEY);
-        setExpand(Array.from(newSet).join(','));
-    }
-  };
 
 
   // 2. 监听参数变化：自动生成 OData URL
@@ -317,369 +205,49 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     URL.revokeObjectURL(url);
   };
 
-  const columnHelper = createColumnHelper<any>();
-  const columns = queryResult.length > 0 ? Object.keys(queryResult[0])
-    .filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata') 
-    .map(key => 
-      columnHelper.accessor(key, { header: key, cell: info => String(info.getValue()) })
-  ) : [];
-
-  const table = useReactTable({
-    data: queryResult,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
-  const editorTheme = isDark ? vscodeDark : githubLight;
-
   return (
     <div className="flex flex-col gap-4 h-full">
-      {/* 1. 参数构建区 */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl bg-content1 shadow-sm border border-divider shrink-0">
-        <div className="md:col-span-3">
-           <Select 
-            label="实体集 (Entity Set)" 
-            placeholder="选择实体"
-            selectedKeys={selectedEntity ? [selectedEntity] : []} 
-            onSelectionChange={handleEntityChange}
-            variant="bordered"
-            size="sm"
-            items={entitySets.map(e => ({ key: e, label: e }))}
-          >
-            {(item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>}
-          </Select>
-        </div>
-        
-        <div className="md:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Input label="过滤 ($filter)" placeholder="例如: Price gt 20" value={filter} onValueChange={setFilter} size="sm" variant="bordered" />
-          
-          {/* 排序 ($orderby) */}
-          <div className="flex gap-1 items-end">
-            <div className="flex-1">
-                {currentSchema ? (
-                    <Select
-                        label="排序 ($orderby)"
-                        placeholder="字段"
-                        selectedKeys={sortField ? [sortField] : []}
-                        onSelectionChange={(k) => setSortField(Array.from(k).join(''))}
-                        size="sm"
-                        variant="bordered"
-                        classNames={{ value: "text-xs" }}
-                        items={sortItems}
-                    >
-                        {(p) => (
-                            <SelectItem key={p.name} value={p.name} textValue={p.name}>
-                                {p.name}
-                            </SelectItem>
-                        )}
-                    </Select>
-                ) : (
-                    <Input label="排序 ($orderby)" placeholder="字段" value={sortField} onValueChange={setSortField} size="sm" variant="bordered" />
-                )}
-            </div>
-            <Button 
-                isIconOnly 
-                size="sm" 
-                variant="flat" 
-                color={sortOrder === 'asc' ? 'default' : 'secondary'}
-                onPress={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                title={sortOrder === 'asc' ? '升序 (Ascending)' : '降序 (Descending)'}
-                className="mb-0.5"
-            >
-                {sortOrder === 'asc' ? <ArrowDownAz size={18} /> : <ArrowUpZa size={18} />}
-            </Button>
-          </div>
+      <ParamsForm 
+          entitySets={entitySets}
+          selectedEntity={selectedEntity}
+          onEntityChange={handleEntityChange}
+          filter={filter} setFilter={setFilter}
+          select={select} setSelect={setSelect}
+          expand={expand} setExpand={setExpand}
+          sortField={sortField} setSortField={setSortField}
+          sortOrder={sortOrder} setSortOrder={setSortOrder}
+          top={top} setTop={setTop}
+          skip={skip} setSkip={setSkip}
+          count={count} setCount={setCount}
+          currentSchema={currentSchema}
+      />
 
-          <div className="flex gap-2 items-center">
-             <Input label="Top" value={top} onValueChange={setTop} size="sm" variant="bordered" className="w-16" />
-             <Input label="Skip" value={skip} onValueChange={setSkip} size="sm" variant="bordered" className="w-16" />
-             <Checkbox isSelected={count} onValueChange={setCount} size="sm">计数</Checkbox>
-          </div>
-          
-          <div className="hidden md:block"></div> {/* Spacer to fill grid */}
+      <UrlBar 
+          generatedUrl={generatedUrl}
+          setGeneratedUrl={setGeneratedUrl}
+          loading={loading}
+          onRun={executeQuery}
+          onCopyCode={copyReadCode}
+      />
 
-          {/* 智能 Select 字段选择 (Span 2) */}
-          <div className="md:col-span-2">
-            {currentSchema ? (
-                <Select
-                    label="字段 ($select)"
-                    placeholder="选择返回字段"
-                    selectionMode="multiple"
-                    selectedKeys={currentSelectKeys}
-                    onSelectionChange={handleSelectChange}
-                    size="sm"
-                    variant="bordered"
-                    classNames={{ value: "text-xs" }}
-                    items={selectItems}
-                >
-                    {(item) => {
-                        if (item.type === 'Special') {
-                            return (
-                                <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
-                                    <div className="flex items-center gap-2">
-                                        <CheckSquare size={14} /> {item.label}
-                                    </div>
-                                </SelectItem>
-                            );
-                        }
-                        return (
-                            <SelectItem key={item.name} value={item.name} textValue={item.name}>
-                                <div className="flex flex-col">
-                                    <span className="text-small">{item.name}</span>
-                                    <span className="text-tiny text-default-400">{item.type.split('.').pop()}</span>
-                                </div>
-                            </SelectItem>
-                        );
-                    }}
-                </Select>
-            ) : (
-                <Input label="字段 ($select)" placeholder="例如: Name,Price" value={select} onValueChange={setSelect} size="sm" variant="bordered" />
-            )}
-          </div>
+      <ResultTabs 
+          queryResult={queryResult}
+          rawJsonResult={rawJsonResult}
+          rawXmlResult={rawXmlResult}
+          loading={loading}
+          isDark={isDark}
+          onDelete={handleDelete}
+          onExport={() => {}} 
+          downloadFile={downloadFile}
+      />
 
-          {/* 智能 Expand 展开选择 (Span 2) */}
-          <div className="md:col-span-2">
-            {currentSchema ? (
-                <Select
-                    label="展开 ($expand)"
-                    placeholder="选择关联实体"
-                    selectionMode="multiple"
-                    selectedKeys={currentExpandKeys}
-                    onSelectionChange={handleExpandChange}
-                    size="sm"
-                    variant="bordered"
-                    classNames={{ value: "text-xs" }}
-                    items={expandItems}
-                >
-                    {(item) => {
-                        if (item.type === 'Special') {
-                            return (
-                                <SelectItem key={item.name} textValue={item.label} className="font-bold border-b border-divider mb-1">
-                                    <div className="flex items-center gap-2">
-                                        <CheckSquare size={14} /> {item.label}
-                                    </div>
-                                </SelectItem>
-                            );
-                        }
-                        if (item.type === 'placeholder') {
-                            return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
-                        }
-                        return (
-                            <SelectItem key={item.name} value={item.name} textValue={item.name}>
-                                <div className="flex flex-col">
-                                    <span className="text-small">{item.name}</span>
-                                    <span className="text-tiny text-default-400">To: {item.targetType?.split('.').pop()}</span>
-                                </div>
-                            </SelectItem>
-                        );
-                    }}
-                </Select>
-            ) : (
-                <Input label="展开 ($expand)" placeholder="例如: Category" value={expand} onValueChange={setExpand} size="sm" variant="bordered" />
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 2. URL 预览和操作栏 */}
-      <div className="flex gap-2 items-center bg-content2 p-2 rounded-lg border border-divider shrink-0">
-        <Chip size="sm" color="primary" variant="flat" className="shrink-0">GET</Chip>
-        <Input 
-          value={generatedUrl}
-          onValueChange={setGeneratedUrl} 
-          size="sm" 
-          variant="flat" 
-          className="font-mono text-sm"
-          classNames={{ inputWrapper: "bg-transparent shadow-none" }}
-        />
-        <Button isIconOnly size="sm" variant="light" onPress={copyReadCode} title="复制 SAPUI5 代码"><Copy size={16} /></Button>
-        <Button color="primary" size="sm" onPress={executeQuery} isLoading={loading} startContent={<Play size={16} />}>
-            运行查询
-        </Button>
-      </div>
-
-      {/* 3. 结果展示区 (Tabs 布局) */}
-      <div className="flex-1 min-h-0 bg-content1 rounded-xl border border-divider overflow-hidden flex flex-col shadow-sm">
-         <Tabs 
-            aria-label="Result Options" 
-            color="primary" 
-            variant="underlined"
-            classNames={{
-                tabList: "gap-6 w-full relative rounded-none p-0 border-b border-divider px-4 bg-default-100",
-                cursor: "w-full bg-primary",
-                tab: "max-w-fit px-2 h-10 text-sm",
-                tabContent: "group-data-[selected=true]:font-bold",
-                panel: "flex-1 p-0 overflow-hidden h-full flex flex-col" 
-            }}
-        >
-            {/* Tab 1: 表格预览 */}
-            <Tab
-                key="table"
-                title={
-                    <div className="flex items-center space-x-2">
-                        <TableIcon size={14} />
-                        <span>表格预览</span>
-                        <Chip size="sm" variant="flat" className="h-4 text-[10px] px-1 ml-1">{queryResult.length}</Chip>
-                    </div>
-                }
-            >
-                <div className="h-full flex flex-col">
-                    <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-end shrink-0">
-                        <div className="flex gap-2">
-                            <Button size="sm" color="danger" variant="light" onPress={handleDelete} startContent={<Trash size={14}/>}>删除 (Delete)</Button>
-                            <Button size="sm" color="primary" variant="light" startContent={<Save size={14}/>}>导出 (Export)</Button>
-                        </div>
-                    </div>
-                    
-                    <div className="overflow-auto flex-1 w-full">
-                        <table className="w-full text-left border-collapse">
-                        <thead className="sticky top-0 z-10">
-                            {table.getHeaderGroups().map(headerGroup => (
-                            <tr key={headerGroup.id}>
-                                {headerGroup.headers.map(header => (
-                                <th key={header.id} className="border-b border-divider p-3 text-xs font-semibold bg-content2 whitespace-nowrap text-default-600">
-                                    {flexRender(header.column.columnDef.header, header.getContext())}
-                                </th>
-                                ))}
-                            </tr>
-                            ))}
-                        </thead>
-                        <tbody>
-                            {table.getRowModel().rows.map(row => (
-                            <tr key={row.id} className="hover:bg-content2/50 transition-colors border-b border-divider/50 last:border-0">
-                                {row.getVisibleCells().map(cell => (
-                                <td key={cell.id} className="p-3 text-sm whitespace-nowrap text-default-700">
-                                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                </td>
-                                ))}
-                            </tr>
-                            ))}
-                        </tbody>
-                        </table>
-                        {queryResult.length === 0 && !loading && (
-                        <div className="flex flex-col items-center justify-center h-40 text-default-400">
-                            <p>暂无数据</p>
-                        </div>
-                        )}
-                    </div>
-                </div>
-            </Tab>
-
-            {/* Tab 2: JSON 预览 (CodeMirror) */}
-            <Tab
-                key="json"
-                title={
-                    <div className="flex items-center space-x-2">
-                        <Braces size={14} />
-                        <span>JSON 预览</span>
-                    </div>
-                }
-            >
-                <div className="h-full flex flex-col">
-                    <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
-                        <span className="text-xs font-bold px-2 text-warning-500">JSON 响应结果</span>
-                        <div className="flex gap-1">
-                          <Button isIconOnly size="sm" variant="light" onPress={() => downloadFile(rawJsonResult, 'result.json', 'json')} title="导出 JSON">
-                              <Download size={14} />
-                          </Button>
-                          <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawJsonResult)} title="复制 JSON">
-                              <Copy size={14} />
-                          </Button>
-                        </div>
-                    </div>
-                    <div className="flex-1 overflow-hidden relative text-sm">
-                        <CodeMirror 
-                            value={rawJsonResult || '// 请先运行查询以获取结果'} 
-                            height="100%"
-                            className="h-full [&_.cm-scroller]:overflow-scroll"
-                            extensions={[json()]} 
-                            theme={editorTheme}
-                            readOnly={true}
-                            editable={false}
-                            basicSetup={{
-                                lineNumbers: true,
-                                foldGutter: true, 
-                                highlightActiveLine: false
-                            }}
-                        />
-                    </div>
-                </div>
-            </Tab>
-
-             {/* Tab 3: XML 预览 (CodeMirror) */}
-             <Tab
-                key="xml"
-                title={
-                    <div className="flex items-center space-x-2">
-                        <FileCode size={14} />
-                        <span>XML 预览</span>
-                    </div>
-                }
-            >
-                <div className="h-full flex flex-col">
-                    <div className="p-2 border-b border-divider flex justify-between items-center shrink-0 bg-content2">
-                        <span className="text-xs font-bold px-2 text-primary-500">XML / Atom 响应结果</span>
-                        <div className="flex gap-1">
-                          <Button isIconOnly size="sm" variant="light" onPress={() => downloadFile(rawXmlResult, 'result.xml', 'xml')} title="导出 XML">
-                              <Download size={14} />
-                          </Button>
-                          <Button isIconOnly size="sm" variant="light" onPress={() => navigator.clipboard.writeText(rawXmlResult)} title="复制 XML">
-                              <Copy size={14} />
-                          </Button>
-                        </div>
-                    </div>
-                    <div className="flex-1 overflow-hidden relative text-sm">
-                         <CodeMirror 
-                            value={rawXmlResult || '// 请先运行查询以获取结果'} 
-                            height="100%"
-                            className="h-full [&_.cm-scroller]:overflow-scroll"
-                            extensions={[xml()]} 
-                            theme={editorTheme}
-                            readOnly={true}
-                            editable={false}
-                            basicSetup={{
-                                lineNumbers: true,
-                                foldGutter: true,
-                                highlightActiveLine: false
-                            }}
-                        />
-                    </div>
-                </div>
-            </Tab>
-        </Tabs>
-      </div>
-
-      {/* 代码生成模态框 */}
-      <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="3xl">
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="flex gap-2 items-center">
-                <FileCode className="text-primary" />
-                SAPUI5 {modalAction === 'delete' ? '删除(Delete)' : '更新(Update)'} 代码
-              </ModalHeader>
-              <ModalBody>
-                <div className="bg-[#1e1e1e] rounded-lg overflow-hidden border border-white/10">
-                   <CodeMirror 
-                        value={codePreview} 
-                        height="400px" 
-                        extensions={[json()]} 
-                        theme={vscodeDark}
-                        readOnly={true}
-                        editable={false}
-                   />
-                </div>
-              </ModalBody>
-              <ModalFooter>
-                <Button color="default" variant="light" onPress={onClose}>关闭</Button>
-                <Button color="primary" onPress={() => { navigator.clipboard.writeText(codePreview); onClose(); }}>
-                  复制到剪贴板
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+      <CodeModal 
+          isOpen={isOpen}
+          onOpenChange={onOpenChange}
+          code={codePreview}
+          action={modalAction}
+          onCopy={() => navigator.clipboard.writeText(codePreview)}
+      />
     </div>
   );
 };
