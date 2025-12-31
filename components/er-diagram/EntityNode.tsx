@@ -130,9 +130,10 @@ export const EntityNode = React.memo(({ id, data, selected }: NodeProps) => {
             }}
             placement="right-start" 
             offset={20}
-            shouldFlip
+            shouldFlip={false} // 禁用翻转，强制在右侧
             isDismissable={false} 
             shouldCloseOnBlur={false}
+            shouldBlockScroll={false}
          >
             <PopoverTrigger>
                 {/* 仅点击文字触发 Popover，同时阻止冒泡防止选中节点 */}
