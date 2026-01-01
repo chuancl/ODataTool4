@@ -162,7 +162,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                             </div>
                             <Button color="default" variant="light" onPress={onClose}>取消 (Cancel)</Button>
                             
-                            {/* Copy Button is always available now */}
+                            {/* Copy Button is always available now  */}
                             <Button color="secondary" variant="flat" onPress={handleCopy} startContent={<Copy size={16}/>}>
                                 复制 (Copy Code)
                             </Button>
