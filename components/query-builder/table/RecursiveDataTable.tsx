@@ -28,6 +28,7 @@ interface RecursiveDataTableProps {
     onExport?: () => void;
     loading?: boolean;
     parentSelected?: boolean; // 新增：接收父级选中状态
+    entityName?: string; // 新增：实体名称，用于导出文件名/Sheet名
 }
 
 export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({ 
@@ -37,7 +38,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     onDelete, 
     onExport, 
     loading = false,
-    parentSelected = false 
+    parentSelected = false,
+    entityName = 'Main'
 }) => {
     const tableContainerRef = useRef<HTMLDivElement>(null);
     const [containerWidth, setContainerWidth] = useState(() => {
@@ -273,7 +275,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             ? selectedRows.map(r => r.original) 
             : table.getRowModel().rows.map(r => r.original);
 
-        exportToExcel(rowsToExport);
+        exportToExcel(rowsToExport, entityName);
     };
 
     return (

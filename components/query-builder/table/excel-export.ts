@@ -1,7 +1,21 @@
 import * as XLSX from 'xlsx';
 import { isExpandableData } from './utils';
 
-export const exportToExcel = (rowsToExport: any[]) => {
+const getEntityNameFromData = (data: any[]): string | null => {
+    if (!data || data.length === 0) return null;
+    const first = data[0];
+    // V2
+    if (first.__metadata?.type) {
+        return first.__metadata.type.split('.').pop() || null;
+    }
+    // V4
+    if (first['@odata.type']) {
+        return first['@odata.type'].replace('#', '').split('.').pop() || null;
+    }
+    return null;
+};
+
+export const exportToExcel = (rowsToExport: any[], defaultRootName: string = 'Main') => {
     if (rowsToExport.length === 0) {
         alert("没有可导出的数据 (No data to export)");
         return;
@@ -10,8 +24,13 @@ export const exportToExcel = (rowsToExport: any[]) => {
     const wb = XLSX.utils.book_new();
     let globalIdCounter = 1;
 
+    // Determine Root Name
+    let rootName = defaultRootName;
+    const detectedRoot = getEntityNameFromData(rowsToExport);
+    if (detectedRoot) rootName = detectedRoot;
+
     // 定义处理队列：{ name: Sheet名称, data: 数据数组, parentKey: 父级关联键名 }
-    const queue = [{ name: 'Main', data: rowsToExport, parentInfo: null as any }];
+    const queue = [{ name: rootName, data: rowsToExport, parentInfo: null as any }];
     const processedSheets = new Set<string>();
 
     while (queue.length > 0) {
@@ -55,14 +74,18 @@ export const exportToExcel = (rowsToExport: any[]) => {
                     if (Array.isArray(val) || (val && Array.isArray((val as any).results))) {
                         let childData = Array.isArray(val) ? val : (val as any).results;
                         if (childData.length > 0) {
+                            let childSheetName = key;
+                            const detectedChildName = getEntityNameFromData(childData);
+                            if (detectedChildName) childSheetName = detectedChildName;
+
                             queue.push({
-                                name: key, // Sheet名 = 字段名
+                                name: childSheetName, 
                                 data: childData,
                                 parentInfo: { parentId: currentId }
                             });
                         }
                         // 在当前行标记
-                        flatRow[key] = `[See Sheet: ${key}]`;
+                        flatRow[key] = `[See Sheet: ${queue[queue.length-1]?.name || key}]`;
                     } 
                     // Case B: 对象 (1:1) -> 扁平化到当前行
                     else if (typeof val === 'object') {
@@ -93,5 +116,5 @@ export const exportToExcel = (rowsToExport: any[]) => {
 
     // 导出文件
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    XLSX.writeFile(wb, `OData_Export_${timestamp}.xlsx`);
+    XLSX.writeFile(wb, `${rootName}_Export_${timestamp}.xlsx`);
 };

@@ -19,11 +19,12 @@ interface ResultTabsProps {
     onDelete: () => void;
     onExport: () => void;
     downloadFile: (content: string, filename: string, type: 'json' | 'xml') => void;
+    entityName?: string; // 新增：实体名称
 }
 
 export const ResultTabs: React.FC<ResultTabsProps> = ({
     queryResult, rawJsonResult, rawXmlResult, loading, isDark,
-    onDelete, onExport, downloadFile
+    onDelete, onExport, downloadFile, entityName
 }) => {
     const editorTheme = isDark ? vscodeDark : githubLight;
     
@@ -61,6 +62,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                         onDelete={onDelete}
                         onExport={onExport}
                         loading={loading}
+                        entityName={entityName}
                     />
                 </Tab>
 

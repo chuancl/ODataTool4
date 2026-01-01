@@ -283,6 +283,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           onDelete={handleDelete}
           onExport={() => {}} 
           downloadFile={downloadFile}
+          entityName={selectedEntity}
       />
 
       <CodeModal 
