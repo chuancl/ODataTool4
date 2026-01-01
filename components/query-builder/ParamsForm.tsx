@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Select, SelectItem, Selection, Button, Tooltip, Divider } from "@nextui-org/react";
+import { Select, SelectItem, Selection, Button, Tooltip } from "@nextui-org/react";
 import { Wand2, Filter } from 'lucide-react';
 import { EntityType, ParsedSchema } from '@/utils/odata-helper';
 import { FilterBuilderModal } from './FilterBuilderModal';
@@ -112,7 +112,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             />
 
             {/* --- 左侧控制面板 (实体, 过滤, 分页) [col-span-3] --- */}
-            <div className="md:col-span-3 flex flex-col gap-4">
+            <div className="md:col-span-3 flex flex-col gap-3">
                 {/* 1. 实体集选择 */}
                 <Select
                     label="实体集 (Entity Set)"
@@ -122,38 +122,30 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     variant="bordered"
                     size="sm"
                     items={entitySets.map(e => ({ key: e, label: e }))}
+                    classNames={{
+                        trigger: "min-h-10"
+                    }}
                 >
                     {(item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>}
                 </Select>
 
-                <Divider className="opacity-50" />
+                {/* 2. 工具栏：过滤按钮 + 分页控件 (一行显示) */}
+                <div className="flex items-center gap-2">
+                    <Tooltip content={filter || "构建过滤器 ($filter)"} placement="bottom">
+                        <Button 
+                            isIconOnly
+                            color={filter ? "primary" : "default"} 
+                            variant={filter ? "solid" : "bordered"}
+                            onPress={() => setIsFilterModalOpen(true)}
+                            isDisabled={!currentSchema}
+                            size="sm"
+                            className="min-w-10 h-10"
+                        >
+                            {filter ? <Filter size={16} /> : <Wand2 size={16} />}
+                        </Button>
+                    </Tooltip>
 
-                {/* 2. 过滤按钮 & 分页 */}
-                <div className="flex flex-col gap-3 bg-content2/50 p-3 rounded-lg border border-divider/50">
-                    <div className="flex flex-col gap-2">
-                         <span className="text-[10px] uppercase font-bold text-default-400 tracking-wider">数据筛选</span>
-                         <Tooltip content={filter || "点击构建过滤器"}>
-                            <Button 
-                                color={filter ? "primary" : "default"} 
-                                variant={filter ? "flat" : "bordered"}
-                                startContent={filter ? <Filter size={16} /> : <Wand2 size={16} />}
-                                onPress={() => setIsFilterModalOpen(true)}
-                                isDisabled={!currentSchema}
-                                className="w-full justify-start font-medium"
-                                size="sm"
-                            >
-                                {filter ? "已应用过滤条件" : "添加过滤 ($filter)"}
-                            </Button>
-                        </Tooltip>
-                        {filter && (
-                             <span className="text-[10px] text-default-400 font-mono truncate px-1">
-                                {filter}
-                             </span>
-                        )}
-                    </div>
-                    
-                    <div className="flex flex-col gap-2 mt-1">
-                        <span className="text-[10px] uppercase font-bold text-default-400 tracking-wider">分页设置</span>
+                    <div className="flex-1 h-10 border border-divider rounded-lg px-2 flex items-center bg-content2/30">
                         <PaginationControls 
                             top={top} setTop={setTop}
                             skip={skip} setSkip={setSkip}

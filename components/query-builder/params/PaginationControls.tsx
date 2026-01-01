@@ -1,5 +1,5 @@
 import React from 'react';
-import { Input, Checkbox } from "@nextui-org/react";
+import { Input, Checkbox, Tooltip } from "@nextui-org/react";
 
 interface PaginationControlsProps {
     top: string;
@@ -16,37 +16,46 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
     count, setCount
 }) => {
     return (
-        <div className="flex flex-col gap-2 w-full">
-            <div className="flex gap-2">
-                <Input 
-                    label="Top" 
-                    placeholder="20"
-                    value={top} 
-                    onValueChange={setTop} 
-                    size="sm" 
-                    variant="bordered" 
-                    className="flex-1" 
-                />
-                <Input 
-                    label="Skip" 
-                    placeholder="0"
-                    value={skip} 
-                    onValueChange={setSkip} 
-                    size="sm" 
-                    variant="bordered" 
-                    className="flex-1" 
-                />
-            </div>
-            <Checkbox 
-                isSelected={count} 
-                onValueChange={setCount} 
-                size="sm"
+        <div className="flex items-center gap-2 flex-1">
+            <Input 
+                label="Top" 
+                placeholder="20"
+                value={top} 
+                onValueChange={setTop} 
+                size="sm" 
+                variant="bordered" 
+                className="w-16" 
                 classNames={{
-                    label: "text-small text-default-500"
+                    input: "text-center",
+                    label: "text-[10px]"
                 }}
-            >
-                计数 ($count)
-            </Checkbox>
+            />
+            <Input 
+                label="Skip" 
+                placeholder="0"
+                value={skip} 
+                onValueChange={setSkip} 
+                size="sm" 
+                variant="bordered" 
+                className="w-16"
+                classNames={{
+                    input: "text-center",
+                    label: "text-[10px]"
+                }}
+            />
+            <Tooltip content="包含总数 ($inlinecount / $count)">
+                <Checkbox 
+                    isSelected={count} 
+                    onValueChange={setCount} 
+                    size="sm"
+                    classNames={{
+                        label: "text-tiny text-default-500",
+                        base: "m-0 p-0 gap-1"
+                    }}
+                >
+                    Count
+                </Checkbox>
+            </Tooltip>
         </div>
     );
 };
