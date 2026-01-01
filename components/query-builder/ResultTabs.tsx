@@ -63,6 +63,7 @@ interface RecursiveDataTableProps {
     onDelete?: () => void;
     onExport?: () => void;
     loading?: boolean;
+    parentSelected?: boolean; // 新增：接收父级选中状态
 }
 
 const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({ 
@@ -71,7 +72,8 @@ const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     isRoot = false, 
     onDelete, 
     onExport,
-    loading = false 
+    loading = false,
+    parentSelected = false 
 }) => {
     const tableContainerRef = useRef<HTMLDivElement>(null);
     const [containerWidth, setContainerWidth] = useState(() => {
@@ -286,6 +288,20 @@ const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         columnResizeMode: 'onChange',
     });
 
+    // --- 级联勾选逻辑 (Cascading Selection) ---
+    // 监听 parentSelected 变化，同步当前表的所有行状态
+    useEffect(() => {
+        // 如果 parentSelected 明确为 true，全选
+        if (parentSelected) {
+            table.toggleAllRowsSelected(true);
+        } 
+        // 如果 parentSelected 明确为 false，全不选
+        else if (parentSelected === false) {
+            table.toggleAllRowsSelected(false);
+        }
+        // 注意：这里并不处理 "parentSelected 为 undefined" 的情况，保持默认状态
+    }, [parentSelected]);
+
     return (
         <div className="h-full flex flex-col bg-content1 overflow-hidden">
             {isRoot && (
@@ -409,8 +425,12 @@ const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                 {row.getIsExpanded() && (
                                     <tr className="bg-default-50/50">
                                         <td colSpan={row.getVisibleCells().length} className="p-0 border-b border-divider">
-                                            {/* Reuse the Recursive structure */}
-                                            <ExpandedRowView rowData={row.original} isDark={isDark} />
+                                            {/* Reuse the Recursive structure, passing current row selection status down */}
+                                            <ExpandedRowView 
+                                                rowData={row.original} 
+                                                isDark={isDark} 
+                                                parentSelected={row.getIsSelected()} 
+                                            />
                                         </td>
                                     </tr>
                                 )}
@@ -432,7 +452,7 @@ const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 // ----------------------------------------------------------------------
 // ExpandedRowView Component (Master-Detail Content)
 // ----------------------------------------------------------------------
-const ExpandedRowView = ({ rowData, isDark }: { rowData: any, isDark: boolean }) => {
+const ExpandedRowView = ({ rowData, isDark, parentSelected }: { rowData: any, isDark: boolean, parentSelected: boolean }) => {
     // 找出所有嵌套的属性（Expands）
     const expandProps = useMemo(() => {
         const props: { key: string, data: any[], type: 'array' | 'object' }[] = [];
@@ -488,11 +508,12 @@ const ExpandedRowView = ({ rowData, isDark }: { rowData: any, isDark: boolean })
                                 </div>
                             }
                         >
-                            {/* Recursively use RecursiveDataTable for nested data */}
+                            {/* Recursively use RecursiveDataTable for nested data, passing parent selection state */}
                             <RecursiveDataTable 
                                 data={prop.data} 
                                 isDark={isDark} 
                                 isRoot={false} // Sub-tables don't show global delete/export
+                                parentSelected={parentSelected}
                             />
                         </Tab>
                     ))}
