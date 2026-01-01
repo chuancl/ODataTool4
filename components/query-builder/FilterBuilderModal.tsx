@@ -108,12 +108,6 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
         }
     }, [isOpen, currentFilter]);
 
-    // Save geometry on change (debounced slightly via logic)
-    const saveGeometry = (geo: typeof geometry) => {
-        setGeometry(geo);
-        storage.setItem(STORAGE_KEY, geo);
-    };
-
     // --- Drag & Resize Logic ---
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
@@ -141,7 +135,6 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
             if (isDragging.current || isResizing.current) {
                 isDragging.current = false;
                 isResizing.current = false;
-                // Save final state to storage
                 storage.setItem(STORAGE_KEY, geometry); 
             }
         };
@@ -154,13 +147,10 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [isOpen, geometry]); // geometry in dep array to ensure save gets latest? No, standard closure issue. Use ref or just save in setGeometry?
-    // Optimization: saving to storage on every mouse move is bad. Save on MouseUp.
-    // The handleMouseUp accesses 'geometry' state, so we need it in dependency or use a Ref for current geometry.
-    // To simplify, I'm saving in handleMouseUp using the state updater callback or just relying on the fact that geometry updates trigger re-render and effect re-bind.
+    }, [isOpen, geometry]);
 
     const onMouseDownDrag = (e: React.MouseEvent) => {
-        if ((e.target as HTMLElement).closest('.no-drag')) return; // Prevent drag on buttons
+        if ((e.target as HTMLElement).closest('.no-drag')) return;
         isDragging.current = true;
         dragStart.current = { x: e.clientX, y: e.clientY, initialX: geometry.x, initialY: geometry.y };
     };
@@ -210,22 +200,22 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                 newCursorStart = start + 1;
                 newCursorEnd = start + 1;
             } else {
-                // If selection exists, keep selection wrapped: (selected)
                 newCursorStart = start + 1 + selectedText.length + 1;
                 newCursorEnd = newCursorStart;
             }
         } else {
             newVal = currentVal.substring(0, start) + text + currentVal.substring(end);
             
-            // Auto-select placeholder logic
-            // Look for first quoted value e.g. 'value' or 'find' to select it
-            // This is a simple heuristic: select the first string inside single quotes in the inserted text
+            // Auto-select placeholder logic (Smart Selection)
             const quoteMatch = /'([^']+)'/.exec(text);
             if (quoteMatch) {
-                // Found a placeholder like 'value'
-                const matchIndex = text.indexOf(quoteMatch[0]); // Index of 'value' inside inserted text
-                newCursorStart = start + matchIndex; // Start at opening quote
-                newCursorEnd = start + matchIndex + quoteMatch[0].length; // End at closing quote (selects full 'value')
+                // quoteMatch[0] is 'value' (with quotes)
+                // We want to select only the inside: value
+                const matchIndex = text.indexOf(quoteMatch[0]); 
+                // Start after first quote
+                newCursorStart = start + matchIndex + 1; 
+                // End before last quote
+                newCursorEnd = start + matchIndex + quoteMatch[0].length - 1;
             } else {
                 newCursorStart = start + text.length;
                 newCursorEnd = start + text.length;
@@ -270,7 +260,7 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
             >
                 {/* Header (Drag Handle) */}
                 <div 
-                    className="flex items-center justify-between px-4 py-2 border-b border-divider bg-content1 cursor-move select-none"
+                    className="flex items-center justify-between px-4 py-2 border-b border-divider bg-content1 cursor-move select-none shrink-0"
                     onMouseDown={onMouseDownDrag}
                 >
                     <div className="flex items-center gap-2 font-bold text-small text-default-700">
@@ -285,14 +275,16 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
 
                 <CardBody className="p-0 flex flex-col overflow-hidden bg-content2/50 relative">
                     <div className="flex-1 grid grid-cols-12 overflow-hidden h-full">
+                        
                         {/* Left Column: Field Selection */}
-                        <div className="col-span-3 border-r border-divider bg-content1 flex flex-col h-full min-w-0">
-                            <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider">
+                        <div className="col-span-3 border-r border-divider bg-content1 flex flex-col h-full min-h-0">
+                            <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider shrink-0">
                                 实体属性 (Fields)
                             </div>
-                            <ScrollShadow className="flex-1 p-2">
+                            {/* ScrollShadow with full height to enable scrolling */}
+                            <ScrollShadow className="flex-1 p-2 w-full">
                                 {allProperties.length > 0 ? (
-                                    <div className="flex flex-col gap-1">
+                                    <div className="flex flex-col gap-1 pb-2">
                                         {allProperties.map((prop) => {
                                             const isSelected = selectedField === prop.displayName;
                                             return (
@@ -309,8 +301,8 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                                     onDoubleClick={() => insertText(prop.displayName)}
                                                 >
                                                     <div className="flex items-center justify-between gap-2 overflow-hidden">
-                                                        {/* 这里的 overflow-x-auto 允许长名称横向滚动 */}
-                                                        <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
+                                                        {/* Horizontal Scroll for long names */}
+                                                        <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1">
                                                             {prop.isExpand && <Link2 size={10} className={`shrink-0 ${isSelected ? "text-primary-foreground/70" : "text-secondary"}`} />}
                                                             <span className="text-sm font-medium whitespace-nowrap" title={prop.displayName}>{prop.displayName}</span>
                                                         </div>
@@ -329,8 +321,8 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                         </div>
 
                         {/* Middle Column: Operators */}
-                        <div className="col-span-3 border-r border-divider bg-content1 flex flex-col h-full">
-                            <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider">
+                        <div className="col-span-3 border-r border-divider bg-content1 flex flex-col h-full min-h-0">
+                            <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider shrink-0">
                                 运算符 (Operators)
                             </div>
                             <ScrollShadow className="flex-1 p-2 flex flex-col gap-4">
@@ -377,8 +369,8 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                         </div>
 
                         {/* Right Column: Functions */}
-                        <div className="col-span-6 bg-content1 flex flex-col h-full min-w-0">
-                            <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider">
+                        <div className="col-span-6 bg-content1 flex flex-col h-full min-w-0 min-h-0">
+                            <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider shrink-0">
                                 常用函数 (Functions)
                             </div>
                             <div className="flex-1 overflow-hidden flex flex-col">
