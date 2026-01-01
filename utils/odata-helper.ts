@@ -328,56 +328,62 @@ export const generateCSharpDeleteCode = (entitySet: string, keyPredicates: strin
 
 // 5. Java Olingo Code Generator
 export const generateJavaDeleteCode = (entitySet: string, keyPredicates: string[], version: ODataVersion, baseUrl: string) => {
+    // For V2/V3, we default to using the Olingo V3 Client (via V4 wrapper or directly).
+    // Olingo V2 native library is deprecated/server-side focused, so V3 client is the closest "native" client.
+    let sb = '';
+    let clientMethod = 'getClient()'; // Default V4
+
     if (version === 'V4') {
-        let sb = `// Java Olingo V4 Example for deleting from ${entitySet}\n`;
-        sb += `import org.apache.olingo.client.api.ODataClient;\n`;
-        sb += `import org.apache.olingo.client.core.ODataClientFactory;\n`;
-        sb += `import org.apache.olingo.client.api.communication.request.cud.ODataDeleteRequest;\n`;
-        sb += `import org.apache.olingo.client.api.communication.response.ODataDeleteResponse;\n\n`;
-        sb += `// Assuming 'serviceRoot' is set to "${baseUrl}"\n`;
-        sb += `ODataClient client = ODataClientFactory.getClient();\n\n`;
-        
-        keyPredicates.forEach(pred => {
-            sb += `URI uri = client.newURIBuilder(serviceRoot)\n`;
-            sb += `    .appendEntitySetSegment("${entitySet}")\n`;
-            
-            // 简单处理 predicate，移除外层括号
-            const keyVal = pred.replace(/^\(/, '').replace(/\)$/, '');
-            // 如果包含等号，通常是 (Key=Value)，需要更复杂的解析，这里简化输出
-            if (keyVal.includes('=')) {
-                 sb += `    .appendKeySegment(${pred}) // Adjust based on key type\n`;
-            } else {
-                 sb += `    .appendKeySegment(${keyVal})\n`;
-            }
-
-            sb += `    .build();\n`;
-            sb += `ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
-            sb += `ODataDeleteResponse response = request.execute();\n`;
-            sb += `if (response.getStatusCode() == 204) { System.out.println("Deleted"); }\n\n`;
-        });
-        return sb;
+        sb += `// Java Olingo V4 Client Example\n`;
+        clientMethod = 'getClient()';
     } else {
-        // V2/V3 - Use standard Java 11 HttpClient
-        let sb = `// Java 11 HttpClient Example for deleting from ${entitySet} (${version})\n`;
-        sb += `// Note: Olingo V2 Client API is different and verbose. Standard HTTP is often easier.\n`;
-        sb += `import java.net.URI;\n`;
-        sb += `import java.net.http.HttpClient;\n`;
-        sb += `import java.net.http.HttpRequest;\n`;
-        sb += `import java.net.http.HttpResponse;\n\n`;
-        
-        sb += `HttpClient client = HttpClient.newHttpClient();\n\n`;
-
-        keyPredicates.forEach(pred => {
-            // 注意：V2 往往需要完整的 URL
-            const url = `${baseUrl.replace(/\/$/, '')}/${entitySet}${pred}`;
-            sb += `HttpRequest request = HttpRequest.newBuilder()\n`;
-            sb += `    .uri(URI.create("${url}"))\n`;
-            sb += `    .header("DataServiceVersion", "2.0")\n`;
-            sb += `    .DELETE()\n`;
-            sb += `    .build();\n`;
-            sb += `HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());\n`;
-            sb += `System.out.println("Status: " + response.statusCode());\n\n`;
-        });
-        return sb;
+        // Handle V2 and V3 using getV3() for compatibility
+        sb += `// Java Olingo Client Example (V2/V3 Compatible)\n`;
+        sb += `// Note: Uses Olingo V3 Client API which is compatible with V2 for standard CRUD.\n`;
+        clientMethod = 'getV3()';
     }
+
+    sb += `// Dependencies: org.apache.olingo:odata-client-core:4.x, org.apache.olingo:odata-client-api:4.x\n`;
+    sb += `import org.apache.olingo.client.api.ODataClient;\n`;
+    sb += `import org.apache.olingo.client.core.ODataClientFactory;\n`;
+    sb += `import org.apache.olingo.client.api.communication.request.cud.ODataDeleteRequest;\n`;
+    sb += `import org.apache.olingo.client.api.communication.response.ODataDeleteResponse;\n`;
+    sb += `import java.net.URI;\n\n`;
+    
+    sb += `public void deleteItems() {\n`;
+    sb += `    String serviceRoot = "${baseUrl}";\n`;
+    sb += `    ODataClient client = ODataClientFactory.${clientMethod};\n\n`;
+    
+    keyPredicates.forEach(pred => {
+        sb += `    try {\n`;
+        sb += `        URI uri = client.newURIBuilder(serviceRoot)\n`;
+        sb += `            .appendEntitySetSegment("${entitySet}")\n`;
+        
+        // Handle predicate
+        const keyVal = pred.replace(/^\(/, '').replace(/\)$/, '');
+        // For simple single keys, we can use appendKeySegment(value). 
+        if (keyVal.includes('=')) {
+                sb += `            .appendKeySegment(${pred}) // Check key format if composite\n`;
+        } else {
+                sb += `            .appendKeySegment(${keyVal})\n`;
+        }
+
+        sb += `            .build();\n\n`;
+        sb += `        ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
+        // For V2, we might want to manually set headers if strict V2 is required, but client usually handles it.
+        if (version === 'V2') {
+             sb += `        request.addCustomHeader("DataServiceVersion", "2.0");\n`;
+             sb += `        request.addCustomHeader("MaxDataServiceVersion", "2.0");\n`;
+        }
+
+        sb += `        ODataDeleteResponse response = request.execute();\n`;
+        sb += `        if (response.getStatusCode() == 204) {\n`;
+        sb += `            System.out.println("Deleted: " + uri);\n`;
+        sb += `        }\n`;
+        sb += `    } catch (Exception e) {\n`;
+        sb += `        e.printStackTrace();\n`;
+        sb += `    }\n`;
+    });
+    sb += `}\n`;
+    return sb;
 };
