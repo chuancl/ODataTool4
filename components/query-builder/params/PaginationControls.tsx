@@ -23,9 +23,9 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
     return (
         <div className="flex items-center border-2 border-default-200 rounded-xl px-3 bg-content1 hover:border-default-400 transition-colors h-14 w-full overflow-hidden relative shadow-sm">
             
-            {/* 1. Filter Section (Flex Grow) */}
+            {/* 1. Filter Section (Flex Grow + min-w-0 to prevent overflow) */}
             <div 
-                className="flex-1 flex flex-col justify-center h-full cursor-pointer group pr-2 mr-2 relative"
+                className="flex-1 min-w-0 flex flex-col justify-center h-full cursor-pointer group pr-2 mr-2 relative"
                 onClick={onOpenFilter}
             >
                 <div className="flex items-center justify-between">
@@ -36,13 +36,14 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
                
                 <div className="flex items-center gap-2 h-6 text-small text-foreground w-full">
                     {filter ? (
-                        <div className="flex items-center gap-1 w-full relative">
+                        <div className="flex items-center gap-1 w-full">
                             <Filter size={14} className="text-primary shrink-0" />
-                            <span className="truncate font-mono text-xs w-[calc(100%-40px)]" title={filter}>{filter}</span>
-                            {/* Clear Button (Propagation Stop) */}
+                            {/* flex-1 + truncate ensures text takes available space but doesn't push others */}
+                            <span className="truncate font-mono text-xs flex-1" title={filter}>{filter}</span>
+                            {/* Clear Button */}
                             <div 
                                 role="button"
-                                className="absolute right-0 top-1/2 -translate-y-1/2 p-1 text-default-400 hover:text-danger z-10"
+                                className="p-1 text-default-400 hover:text-danger z-10 shrink-0"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     onClearFilter();
@@ -52,7 +53,7 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
                             </div>
                         </div>
                     ) : (
-                        <span className="text-default-300 text-xs italic group-hover:text-default-400 transition-colors">
+                        <span className="text-default-300 text-xs italic group-hover:text-default-400 transition-colors truncate">
                             点击构建过滤器...
                         </span>
                     )}
@@ -62,8 +63,8 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
             {/* Divider */}
             <div className="w-px h-8 bg-divider shrink-0 mr-3" />
 
-            {/* 2. Top Section */}
-            <div className="flex flex-col w-12 items-center justify-center h-full mr-1">
+            {/* 2. Top Section (shrink-0) */}
+            <div className="flex flex-col w-12 items-center justify-center h-full mr-1 shrink-0">
                 <label htmlFor="input-top" className="text-[10px] text-default-500 font-medium cursor-text w-full text-center">Top</label>
                 <input 
                     id="input-top"
@@ -77,8 +78,8 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
             {/* Divider */}
             <div className="w-px h-8 bg-divider shrink-0 mx-2" />
 
-            {/* 3. Skip Section */}
-            <div className="flex flex-col w-12 items-center justify-center h-full mr-1">
+            {/* 3. Skip Section (shrink-0) */}
+            <div className="flex flex-col w-12 items-center justify-center h-full mr-1 shrink-0">
                 <label htmlFor="input-skip" className="text-[10px] text-default-500 font-medium cursor-text w-full text-center">Skip</label>
                 <input 
                     id="input-skip"
@@ -92,8 +93,8 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
             {/* Divider */}
             <div className="w-px h-8 bg-divider shrink-0 mx-2" />
 
-            {/* 4. Count Section */}
-            <div className="flex flex-col items-center justify-center h-full min-w-[50px]">
+            {/* 4. Count Section (shrink-0) */}
+            <div className="flex flex-col items-center justify-center h-full min-w-[50px] shrink-0">
                  <span className="text-[10px] text-default-500 font-medium mb-1">Count</span>
                  <Switch 
                     size="sm" 
