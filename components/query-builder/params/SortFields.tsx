@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Input, Select, SelectItem, Selection } from "@nextui-org/react";
-import { ArrowDownAz, ArrowUpZa, Link2 } from 'lucide-react';
+import { Link2 } from 'lucide-react';
 import { EntityType } from '@/utils/odata-helper';
 
 export interface SortItem {
@@ -95,7 +95,6 @@ export const SortFields: React.FC<SortFieldsProps> = ({
                 classNames={commonClassNames}
                 items={sortOptions}
                 isMultiline={true}
-                startContent={<ArrowDownAz size={14} className="text-default-400" />}
             >
                 {(p) => (
                     <SelectItem key={p.name} value={p.name} textValue={p.name}>
@@ -122,7 +121,6 @@ export const SortFields: React.FC<SortFieldsProps> = ({
                 classNames={commonClassNames}
                 items={sortOptions}
                 isMultiline={true}
-                startContent={<ArrowUpZa size={14} className="text-default-400" />}
             >
                 {(p) => (
                     <SelectItem key={p.name} value={p.name} textValue={p.name}>
