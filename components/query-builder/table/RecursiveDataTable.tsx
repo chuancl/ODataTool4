@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Checkbox } from "@nextui-org/react";
 import { 
     Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight
@@ -27,9 +27,40 @@ interface RecursiveDataTableProps {
     onDelete?: () => void;
     onExport?: () => void;
     loading?: boolean;
-    parentSelected?: boolean; // 新增：接收父级选中状态
-    entityName?: string; // 新增：实体名称，用于导出文件名/Sheet名
+    parentSelected?: boolean; // (Legacy/Optional) Can still be used for initial state
+    entityName?: string;
 }
+
+// 递归更新数据的选中状态
+const updateRecursiveSelection = (data: any, isSelected: boolean) => {
+    if (!data) return;
+    
+    // 如果是数组，遍历处理
+    if (Array.isArray(data)) {
+        data.forEach(item => updateRecursiveSelection(item, isSelected));
+        return;
+    }
+
+    // 如果是对象，设置标记
+    if (typeof data === 'object') {
+        // 直接修改数据对象，添加/更新 __selected 属性
+        // 注意：这是对原始数据的引用修改，即使组件卸载，数据状态也会保留
+        data['__selected'] = isSelected;
+
+        // 继续递归查找子属性
+        Object.values(data).forEach(val => {
+            if (isExpandableData(val)) {
+                if (Array.isArray(val)) {
+                    updateRecursiveSelection(val, isSelected);
+                } else if ((val as any).results && Array.isArray((val as any).results)) {
+                    updateRecursiveSelection((val as any).results, isSelected);
+                } else {
+                     updateRecursiveSelection(val, isSelected);
+                }
+            }
+        });
+    }
+};
 
 export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({ 
     data, 
@@ -38,7 +69,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     onDelete, 
     onExport, 
     loading = false,
-    parentSelected = false,
     entityName = 'Main'
 }) => {
     const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +83,26 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({}); 
     const [expanded, setExpanded] = useState<ExpandedState>({});
     const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
+
+    // --- 1. 初始化选中状态 ---
+    // 组件挂载时，根据 data 中的 __selected 属性恢复 rowSelection 状态
+    useEffect(() => {
+        const initialSelection: RowSelectionState = {};
+        let hasSelection = false;
+        
+        data.forEach((row, index) => {
+            // 如果 __selected 为 true (明确选中) 
+            // 如果 __selected 未定义 (undefined)，默认视为未选中 (或者根据需求默认全选，这里设为默认不选)
+            if (row['__selected'] === true) {
+                initialSelection[index] = true;
+                hasSelection = true;
+            }
+        });
+        
+        if (hasSelection) {
+            setRowSelection(initialSelection);
+        }
+    }, [data]);
 
     // 监听容器宽度变化
     useEffect(() => {
@@ -72,8 +122,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const columns = useMemo(() => {
         if (!data || data.length === 0) return [];
         
-        // 1. 定义固定列
-        // Expander(32px) + Checkbox(40px) + Index(50px) = 122px
         const FIXED_WIDTH = 32 + 40 + 50;
 
         // Expander Column
@@ -99,7 +147,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             enableResizing: false,
         });
 
-        // Select Column
+        // Select Column (Modified for Cascade)
         const selectColumn = columnHelper.display({
             id: 'select',
             header: ({ table }) => (
@@ -108,7 +156,13 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         size="sm"
                         isIndeterminate={table.getIsSomeRowsSelected()}
                         isSelected={table.getIsAllRowsSelected()}
-                        onValueChange={(val) => table.toggleAllRowsSelected(!!val)}
+                        onValueChange={(val) => {
+                            // 全选/全不选处理
+                            const isSelected = !!val;
+                            table.toggleAllRowsSelected(isSelected);
+                            // 递归更新所有数据
+                            updateRecursiveSelection(data, isSelected);
+                        }}
                         aria-label="Select all"
                         classNames={{ wrapper: "m-0" }}
                     />
@@ -119,7 +173,13 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                     <Checkbox
                         size="sm"
                         isSelected={row.getIsSelected()}
-                        onValueChange={(val) => row.toggleSelected(!!val)}
+                        onValueChange={(val) => {
+                            const isSelected = !!val;
+                            // 1. 更新 React Table 内部状态
+                            row.toggleSelected(isSelected);
+                            // 2. 递归更新数据对象上的 __selected 标记
+                            updateRecursiveSelection(row.original, isSelected);
+                        }}
                         aria-label="Select row"
                         classNames={{ wrapper: "m-0" }}
                     />
@@ -131,7 +191,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             maxSize: 40,
         });
 
-        // Index Column
         const indexColumn = columnHelper.display({
             id: 'index',
             header: '#',
@@ -146,41 +205,33 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             maxSize: 100,
         });
 
-        // 2. 处理数据列
-        const rawKeys = Object.keys(data[0]).filter(key => key !== '__metadata');
+        const rawKeys = Object.keys(data[0]).filter(key => key !== '__metadata' && key !== '__selected');
         if (rawKeys.length === 0) return [expanderColumn, selectColumn, indexColumn];
 
-        // 采样前 20 行计算内容宽度
         const sampleData = data.slice(0, 20);
         const columnMeta: Record<string, number> = {};
         let totalBaseWidth = 0;
         
         rawKeys.forEach(key => {
             let maxWeightedLen = Math.max(key.length * 1.3, 4); 
-            
             sampleData.forEach(row => {
                 const val = row[key];
                 if (val !== null && val !== undefined) {
                     const str = String(val);
                     let len = 0;
-                    for (let i = 0; i < str.length; i++) {
-                        len += (str.charCodeAt(i) > 255) ? 1.6 : 1;
-                    }
+                    for (let i = 0; i < str.length; i++) len += (str.charCodeAt(i) > 255) ? 1.6 : 1;
                     let weightedLen = len;
                     if (len > 30) weightedLen = 30 + (len - 30) * 0.5;
                     if (weightedLen > 80) weightedLen = 80 + (weightedLen - 80) * 0.2;
                     if (weightedLen > 250) weightedLen = 250;
-
                     if (weightedLen > maxWeightedLen) maxWeightedLen = weightedLen;
                 }
             });
-
             const basePx = Math.min(Math.max(Math.ceil(maxWeightedLen * 8) + 24, 80), 400);
             columnMeta[key] = basePx;
             totalBaseWidth += basePx;
         });
 
-        // 3. 决定铺满逻辑
         const availableWidthForData = containerWidth > 0 ? (containerWidth - 2 - FIXED_WIDTH) : 0;
         const shouldScale = availableWidthForData > 0 && totalBaseWidth < availableWidthForData;
         const scaleRatio = shouldScale ? (availableWidthForData / totalBaseWidth) : 1;
@@ -202,8 +253,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                     <ContentRenderer 
                         value={info.getValue()} 
                         columnName={key} 
-                        // IMPORTANT: Pass expand handler. 
-                        // If cell content is an array/object chip, clicking it will expand the row.
                         onExpand={
                             isExpandableData(info.getValue()) 
                             ? info.row.getToggleExpandedHandler() 
@@ -220,7 +269,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
     }, [data, containerWidth]);
 
-    // 初始化列顺序
     useEffect(() => {
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
@@ -230,18 +278,12 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const table = useReactTable({
         data,
         columns,
-        state: {
-            sorting,
-            columnOrder,
-            rowSelection,
-            expanded,
-        },
+        state: { sorting, columnOrder, rowSelection, expanded },
         enableRowSelection: true, 
         enableExpanding: true,
-        // 自定义展开逻辑：只有包含对象或数组的行才可展开
         getRowCanExpand: row => {
             const keys = Object.keys(row.original);
-            return keys.some(k => k !== '__metadata' && isExpandableData(row.original[k]));
+            return keys.some(k => k !== '__metadata' && k !== '__selected' && isExpandableData(row.original[k]));
         },
         onExpandedChange: setExpanded,
         onRowSelectionChange: setRowSelection,
@@ -249,33 +291,15 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
-        getExpandedRowModel: getExpandedRowModel(), // Required for expansion
+        getExpandedRowModel: getExpandedRowModel(),
         enableColumnResizing: true,
         columnResizeMode: 'onChange',
     });
 
-    // --- 级联勾选逻辑 (Cascading Selection) ---
-    // 监听 parentSelected 变化，同步当前表的所有行状态
-    useEffect(() => {
-        // 如果 parentSelected 明确为 true，全选
-        if (parentSelected) {
-            table.toggleAllRowsSelected(true);
-        } 
-        // 如果 parentSelected 明确为 false，全不选
-        else if (parentSelected === false) {
-            table.toggleAllRowsSelected(false);
-        }
-    }, [parentSelected]);
-
-    // --- Excel Export Handler ---
     const handleExport = () => {
-        // 1. 确定要导出的数据：如果有勾选，只导出勾选；否则导出全部
-        const selectedRows = table.getSelectedRowModel().rows;
-        const rowsToExport = selectedRows.length > 0 
-            ? selectedRows.map(r => r.original) 
-            : table.getRowModel().rows.map(r => r.original);
-
-        exportToExcel(rowsToExport, entityName);
+        // 导出时，传入根节点数据。exportToExcel 内部会根据 __selected 字段进行过滤
+        // 注意：这里我们传入完整数据，让导出函数去遍历和筛选，因为子组件可能没有渲染（table.getSelectedRowModel只包含当前层级）
+        exportToExcel(data, entityName);
     };
 
     return (
@@ -316,7 +340,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                         onDragOver={(e) => e.preventDefault()}
                                         onDrop={(e) => {
                                             e.preventDefault();
-                                            // Disable dragging fixed columns or dropping onto them
                                             if (draggingColumn && draggingColumn !== header.column.id && !['expander', 'select', 'index'].includes(header.id)) {
                                                 const newOrder = [...columnOrder];
                                                 const dragIndex = newOrder.indexOf(draggingColumn);
@@ -330,15 +353,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                         }}
                                     >
                                         <div className="flex items-center gap-1 w-full overflow-hidden justify-center">
-                                            {/* Drag Handle */}
                                             {!['expander', 'select', 'index'].includes(header.id) && (
-                                                <GripVertical 
-                                                    size={12} 
-                                                    className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute left-1" 
-                                                />
+                                                <GripVertical size={12} className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute left-1" />
                                             )}
-                                            
-                                            {/* Header Content */}
                                             {['expander', 'select', 'index'].includes(header.id) ? (
                                                 <div className="flex items-center justify-center w-full">
                                                     {flexRender(header.column.columnDef.header, header.getContext())}
@@ -358,8 +375,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                                 </div>
                                             )}
                                         </div>
-
-                                        {/* Resizer */}
                                         {header.column.getCanResize() && (
                                             <div
                                                 onMouseDown={header.getResizeHandler()}
@@ -397,11 +412,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                         </td>
                                     ))}
                                 </tr>
-                                {/* EXPANDED ROW DETAIL */}
                                 {row.getIsExpanded() && (
                                     <tr className="bg-default-50/50">
                                         <td colSpan={row.getVisibleCells().length} className="p-0 border-b border-divider">
-                                            {/* Reuse the Recursive structure, passing current row selection status down */}
                                             <ExpandedRowView 
                                                 rowData={row.original} 
                                                 isDark={isDark} 
