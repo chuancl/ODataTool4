@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Button, Tabs, Tab, ScrollShadow, Textarea, Tooltip, Card, CardBody } from "@nextui-org/react";
 import { EntityType } from '@/utils/odata-helper';
 import { Calculator, Calendar, Type, FunctionSquare, Braces, Eraser, Check, Link2, GripHorizontal, X, Scaling } from 'lucide-react';
-import { storage } from 'wxt/storage';
+import { saveComponentGeometry, getComponentGeometry, ComponentGeometry } from '@/utils/storage';
 
 interface FilterBuilderModalProps {
     isOpen: boolean;
@@ -13,7 +13,8 @@ interface FilterBuilderModalProps {
     expandedProperties?: any[];
 }
 
-const STORAGE_KEY = 'sync:filter_builder_modal_geometry';
+// 唯一标识符，用于存储位置信息
+const COMPONENT_ID = 'filter_builder_modal';
 
 const OPERATORS = {
     comparison: [
@@ -77,27 +78,20 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
     const [selectedField, setSelectedField] = useState<string | null>(null);
 
     // --- Window State (Drag & Resize) ---
-    const [geometry, setGeometry] = useState({ x: 100, y: 100, width: 900, height: 600 });
+    const [geometry, setGeometry] = useState<ComponentGeometry>({ x: 100, y: 100, width: 900, height: 600 });
     const isDragging = useRef(false);
     const isResizing = useRef(false);
     const dragStart = useRef({ x: 0, y: 0, initialX: 0, initialY: 0 });
     const resizeStart = useRef({ x: 0, y: 0, initialW: 0, initialH: 0 });
 
-    // Load initial geometry from storage
+    // Load initial geometry from storage using generic util
     useEffect(() => {
-        storage.getItem(STORAGE_KEY).then((saved: any) => {
-            if (saved && typeof saved === 'object') {
-                setGeometry(saved);
-            } else {
-                // Default Center
-                setGeometry({
-                    x: Math.max(0, (window.innerWidth - 900) / 2),
-                    y: Math.max(0, (window.innerHeight - 600) / 2),
-                    width: 900,
-                    height: 600
-                });
-            }
-        });
+        getComponentGeometry(COMPONENT_ID, {
+            x: Math.max(0, (window.innerWidth - 900) / 2),
+            y: Math.max(0, (window.innerHeight - 600) / 2),
+            width: 900,
+            height: 600
+        }).then(setGeometry);
     }, []);
 
     // Sync expression when opening
@@ -135,7 +129,8 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
             if (isDragging.current || isResizing.current) {
                 isDragging.current = false;
                 isResizing.current = false;
-                storage.setItem(STORAGE_KEY, geometry); 
+                // Save geometry using generic util
+                saveComponentGeometry(COMPONENT_ID, geometry);
             }
         };
 
