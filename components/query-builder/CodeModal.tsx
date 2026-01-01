@@ -36,7 +36,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
         navigator.clipboard.writeText(currentCodeText);
     };
 
-    // Manual Tab Definition (Safe & Simple)
+    // Manual Tab Definition (Safe & Simple) 
     const tabOptions = [
         { key: 'url', label: 'URL List', icon: Globe },
         { key: 'sapui5', label: 'SAPUI5', icon: FileCode },
