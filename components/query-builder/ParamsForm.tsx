@@ -17,7 +17,7 @@ interface ParamsFormProps {
     select: string; setSelect: (val: string) => void;
     expand: string; setExpand: (val: string) => void;
     
-    // Changed sort props to support multiple items
+    // Sort props
     sortItems: SortItem[];
     setSortItems: (items: SortItem[]) => void;
 
@@ -196,43 +196,76 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         setExpand(Array.from(newSet).join(','));
     };
 
-    // --- Sort 字段逻辑 (支持多选和独立排序) ---
+    // --- Sort 字段逻辑 (拆分为升序/降序两个下拉框，互斥) ---
     const sortOptions = useMemo(() => {
         if (!currentSchema) return [];
         const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
         return [...mainProps, ...expandedEntityProperties];
     }, [currentSchema, expandedEntityProperties]);
 
-    const currentSortKeys = useMemo(() => {
-        return new Set(sortItems.map(i => i.field));
-    }, [sortItems]);
+    // 计算当前的 Asc 和 Desc 集合
+    const currentAscKeys = useMemo(() => new Set(sortItems.filter(i => i.order === 'asc').map(i => i.field)), [sortItems]);
+    const currentDescKeys = useMemo(() => new Set(sortItems.filter(i => i.order === 'desc').map(i => i.field)), [sortItems]);
 
-    const handleSortSelectionChange = (keys: Selection) => {
-        const newKeys = new Set(keys);
+    // 处理升序变化
+    const handleAscChange = (keys: Selection) => {
+        const newSet = new Set(keys);
         
-        // 1. 保留现有的 items (如果它们还在新集合里)
-        const keptItems = sortItems.filter(item => newKeys.has(item.field));
+        // 1. 保留原本是 Desc 的项 (不受影响)
+        // 2. 找出原本是 Asc 但现在依然被选中的项 (保留顺序)
+        // 3. 添加新选中的 Asc 项
         
-        // 2. 找出新增的 keys
-        const existingKeySet = new Set(sortItems.map(i => i.field));
-        const addedKeys = Array.from(newKeys).filter(k => !existingKeySet.has(String(k)));
+        const existingDescItems = sortItems.filter(i => i.order === 'desc');
+        const existingAscItems = sortItems.filter(i => i.order === 'asc' && newSet.has(i.field));
         
-        // 3. 创建新 items
-        const newItems = addedKeys.map(k => ({ field: String(k), order: 'asc' as const }));
+        const existingAscKeySet = new Set(existingAscItems.map(i => i.field));
+        const newAscItems = Array.from(newSet)
+            .filter(k => !existingAscKeySet.has(String(k)))
+            .map(k => ({ field: String(k), order: 'asc' as const }));
+
+        // 这里的顺序策略：先保留之前的 Desc，然后是之前的 Asc，然后是新增的 Asc
+        // 为了保持用户的预期，通常我们希望整体列表反映操作顺序。
+        // 但既然分开了两个框，我们尽量保持 `sortItems` 里的相对顺序稳定。
+        // 简单策略：重建列表 -> [所有Desc] + [所有Asc] 或者混合。
+        // 为了简单且符合直觉：我们过滤掉旧的Asc，保留Desc，然后追加新的Asc集合。
+        // 但这样会导致每次修改Asc，所有的Asc字段都跑到排序末尾。
+        // 更好的策略：遍历 `sortItems`，保留还在集合里的；然后追加新的。
         
-        setSortItems([...keptItems, ...newItems]);
+        const nextItems = sortItems.filter(item => {
+            if (item.order === 'desc') return true; // 保留 Desc
+            return newSet.has(item.field); // 保留还在选中的 Asc
+        });
+
+        // 查找哪些是纯新增的 key
+        const currentKeys = new Set(sortItems.map(i => i.field));
+        Array.from(newSet).forEach(k => {
+            const keyStr = String(k);
+            if (!currentKeys.has(keyStr)) {
+                nextItems.push({ field: keyStr, order: 'asc' });
+            }
+        });
+
+        setSortItems(nextItems);
     };
 
-    const toggleSortOrder = (field: string) => {
-        setSortItems(sortItems.map(item => 
-            item.field === field 
-                ? { ...item, order: item.order === 'asc' ? 'desc' : 'asc' } 
-                : item
-        ));
-    };
+    // 处理降序变化
+    const handleDescChange = (keys: Selection) => {
+        const newSet = new Set(keys);
+        
+        const nextItems = sortItems.filter(item => {
+            if (item.order === 'asc') return true; // 保留 Asc
+            return newSet.has(item.field); // 保留还在选中的 Desc
+        });
 
-    const removeSortItem = (field: string) => {
-        setSortItems(sortItems.filter(item => item.field !== field));
+        const currentKeys = new Set(sortItems.map(i => i.field));
+        Array.from(newSet).forEach(k => {
+            const keyStr = String(k);
+            if (!currentKeys.has(keyStr)) {
+                nextItems.push({ field: keyStr, order: 'desc' });
+            }
+        });
+
+        setSortItems(nextItems);
     };
 
     return (
@@ -254,73 +287,83 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             <div className="md:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Input label="过滤 ($filter)" placeholder="例如: Price gt 20" value={filter} onValueChange={setFilter} size="sm" variant="bordered" />
 
-                {/* 排序 ($orderby) - 支持多选与独立顺序 */}
+                {/* 排序 - 升序 ($orderby asc) */}
                 <div className="md:col-span-1">
                     {currentSchema ? (
                         <Select
-                            label="排序 ($orderby)"
-                            placeholder="选择排序字段"
+                            label="升序 (Ascending)"
+                            placeholder="选择升序字段"
                             selectionMode="multiple"
-                            selectedKeys={currentSortKeys}
-                            onSelectionChange={handleSortSelectionChange}
+                            selectedKeys={currentAscKeys}
+                            onSelectionChange={handleAscChange}
                             size="sm"
                             variant="bordered"
-                            classNames={{ 
-                                value: "text-xs",
-                                trigger: "min-h-unit-10"
-                            }}
+                            classNames={{ value: "text-xs" }}
                             items={sortOptions}
                             isMultiline={true}
-                            renderValue={(items) => {
-                                return (
-                                    <div className="flex flex-wrap gap-1">
-                                        {items.map((item) => {
-                                            const sortItem = sortItems.find(i => i.field === item.key);
-                                            const isAsc = sortItem?.order === 'asc';
-                                            return (
-                                                <Chip 
-                                                    key={item.key} 
-                                                    size="sm" 
-                                                    variant="flat"
-                                                    onClose={() => removeSortItem(String(item.key))}
-                                                    classNames={{ base: "h-5 text-[10px] gap-1 px-1" }}
-                                                >
-                                                    <div 
-                                                        className="flex items-center gap-1 cursor-pointer select-none"
-                                                        onClick={(e) => { e.stopPropagation(); toggleSortOrder(String(item.key)); }}
-                                                        title="点击切换升/降序"
-                                                    >
-                                                        <span>{item.data?.name}</span>
-                                                        {isAsc ? <ArrowDownAz size={10} /> : <ArrowUpZa size={10} />}
-                                                    </div>
-                                                </Chip>
-                                            );
-                                        })}
-                                    </div>
-                                );
-                            }}
+                            startContent={<ArrowDownAz size={14} className="text-default-400" />}
                         >
                             {(p) => (
-                                <SelectItem key={p.name} value={p.name} textValue={p.name}>
-                                    <div className="flex items-center gap-2">
-                                        {p.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
-                                        <div className="flex flex-col">
+                                <SelectItem 
+                                    key={p.name} 
+                                    value={p.name} 
+                                    textValue={p.name}
+                                    // 互斥逻辑：如果在 Desc 集合中，则禁用
+                                    isDisabled={currentDescKeys.has(p.name)}
+                                    className={currentDescKeys.has(p.name) ? "opacity-50" : ""}
+                                >
+                                    <div className="flex items-center gap-2 justify-between">
+                                        <div className="flex items-center gap-2">
+                                            {p.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
                                             <span className={`text-small ${p.isExpanded ? 'text-secondary' : ''}`}>{p.name}</span>
                                         </div>
+                                        {currentDescKeys.has(p.name) && <span className="text-[10px] text-danger">已选降序</span>}
                                     </div>
                                 </SelectItem>
                             )}
                         </Select>
                     ) : (
-                        <Input 
-                            label="排序 ($orderby)" 
-                            placeholder="字段 (例如: Price desc)" 
-                            value={sortItems.length > 0 ? sortItems.map(i => `${i.field} ${i.order}`).join(',') : ''} 
-                            // 简单回退处理：如果手动输入，视为单个 asc 字段
-                            onValueChange={(v) => setSortItems(v ? [{ field: v, order: 'asc' }] : [])} 
-                            size="sm" 
-                            variant="bordered" 
-                        />
+                        <Input isDisabled label="升序" placeholder="需先选择实体" size="sm" variant="bordered" />
+                    )}
+                </div>
+
+                {/* 排序 - 降序 ($orderby desc) */}
+                <div className="md:col-span-1">
+                    {currentSchema ? (
+                        <Select
+                            label="降序 (Descending)"
+                            placeholder="选择降序字段"
+                            selectionMode="multiple"
+                            selectedKeys={currentDescKeys}
+                            onSelectionChange={handleDescChange}
+                            size="sm"
+                            variant="bordered"
+                            classNames={{ value: "text-xs" }}
+                            items={sortOptions}
+                            isMultiline={true}
+                            startContent={<ArrowUpZa size={14} className="text-default-400" />}
+                        >
+                            {(p) => (
+                                <SelectItem 
+                                    key={p.name} 
+                                    value={p.name} 
+                                    textValue={p.name}
+                                    // 互斥逻辑：如果在 Asc 集合中，则禁用 
+                                    isDisabled={currentAscKeys.has(p.name)}
+                                    className={currentAscKeys.has(p.name) ? "opacity-50" : ""}
+                                >
+                                    <div className="flex items-center gap-2 justify-between">
+                                        <div className="flex items-center gap-2">
+                                            {p.isExpanded && <Link2 size={12} className="text-secondary opacity-70"/>}
+                                            <span className={`text-small ${p.isExpanded ? 'text-secondary' : ''}`}>{p.name}</span>
+                                        </div>
+                                        {currentAscKeys.has(p.name) && <span className="text-[10px] text-primary">已选升序</span>}
+                                    </div>
+                                </SelectItem>
+                            )}
+                        </Select>
+                    ) : (
+                        <Input isDisabled label="降序" placeholder="需先选择实体" size="sm" variant="bordered" />
                     )}
                 </div>
 
@@ -330,8 +373,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     <Checkbox isSelected={count} onValueChange={setCount} size="sm">计数</Checkbox>
                 </div>
 
-                <div className="hidden md:block"></div> {/* Spacer */}
-
+                {/* Row 2: Select & Expand (Col Span 2 each) */}
+                
                 {/* 智能 Select 字段选择 */}
                 <div className="md:col-span-2">
                     {currentSchema ? (
