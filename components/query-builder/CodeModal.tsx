@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Tabs, Tab } from "@nextui-org/react";
 import { FileCode, Trash2, Copy, Globe, Terminal, Coffee } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
@@ -8,30 +8,49 @@ import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 interface CodeModalProps {
     isOpen: boolean;
     onOpenChange: (open: boolean) => void;
-    // Update: code can be a string (single view) or an object (multi-tab)
+    // code can be a string (single view) or an object (multi-tab)
     code: string | { url: string, sapui5: string, csharp: string, java: string };
     action: 'delete' | 'update' | 'create';
-    onExecute: () => void; // For 'delete', this executes. For others, it handles copy? No, we handle copy internally now.
+    onExecute: () => void;
 }
 
 export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code, action, onExecute }) => {
-    const [selectedTab, setSelectedTab] = useState<string>('url');
+    // 使用 React.Key 类型以匹配 NextUI Tabs
+    const [selectedTab, setSelectedTab] = useState<string | number>('url');
 
-    // 如果 code 是字符串，说明是单视图模式（如 Update/Create/MockData）
+    // 每次打开时重置 Tab 到默认值，避免状态混乱
+    useEffect(() => {
+        if (isOpen) {
+            setSelectedTab('url');
+        }
+    }, [isOpen]);
+
+    // 如果 code 是字符串，说明是单视图模式
     const isSingleMode = typeof code === 'string';
 
-    // 获取当前显示的文本内容，用于复制
-    const currentCodeText = isSingleMode 
-        ? (code as string)
-        : (code as any)[selectedTab] || '';
+    // 计算当前需要显示的代码内容
+    const currentCodeText = useMemo(() => {
+        if (isSingleMode) return (code as string) || '';
+        
+        // 多语言模式，根据 selectedTab 返回对应代码
+        const codeObj = code as { [key: string]: string };
+        return codeObj[selectedTab as string] || '';
+    }, [code, isSingleMode, selectedTab]);
 
     const handleCopy = () => {
         navigator.clipboard.writeText(currentCodeText);
-        // 可以加一个 toast 提示，但这里简单处理
     };
 
     return (
-        <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="4xl" scrollBehavior="inside">
+        <Modal 
+            isOpen={isOpen} 
+            onOpenChange={onOpenChange} 
+            size="4xl" 
+            scrollBehavior="inside"
+            // 确保 Modal 关闭时销毁内容，避免残留
+            shouldBlockScroll={true} 
+            isDismissable={false}
+        >
             <ModalContent>
                 {(onClose) => (
                     <>
@@ -39,9 +58,9 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                             <FileCode className="text-primary" />
                             {action === 'delete' ? '确认删除 (Confirm Delete)' : `代码预览 (${action})`}
                         </ModalHeader>
-                        <ModalBody className="p-0 bg-[#1e1e1e]">
+                        <ModalBody className="p-0 bg-[#1e1e1e] flex flex-col min-h-[400px]">
                             {action === 'delete' && (
-                                <div className="p-4 pb-0 text-sm text-warning-500 font-bold bg-background">
+                                <div className="p-4 pb-0 text-sm text-warning-500 font-bold bg-background shrink-0">
                                     警告: 您即将执行 DELETE 操作。以下是生成的代码供参考。
                                     <br/>
                                     Warning: You are about to DELETE data. Review the code snippets below.
@@ -49,10 +68,11 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                             )}
 
                             {isSingleMode ? (
-                                <div className="p-4">
+                                <div className="p-4 h-full flex-1">
                                      <CodeMirror
-                                        value={code as string}
-                                        height="400px"
+                                        value={currentCodeText}
+                                        height="100%"
+                                        className="h-full"
                                         extensions={[json()]}
                                         theme={vscodeDark}
                                         readOnly={true}
@@ -61,96 +81,74 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                 </div>
                             ) : (
                                 <div className="flex flex-col h-[500px]">
-                                    <Tabs 
-                                        aria-label="Code Options" 
-                                        color="primary" 
-                                        variant="underlined"
-                                        selectedKey={selectedTab}
-                                        onSelectionChange={(key) => setSelectedTab(key as string)}
-                                        classNames={{
-                                            tabList: "gap-6 w-full relative rounded-none p-0 border-b border-white/10 px-4 bg-[#252526]",
-                                            cursor: "w-full bg-primary",
-                                            tab: "max-w-fit px-2 h-10 text-sm text-gray-400 data-[selected=true]:text-white",
-                                            panel: "flex-1 p-0 overflow-hidden h-full flex flex-col bg-[#1e1e1e]"
-                                        }}
-                                    >
-                                        <Tab 
-                                            key="url" 
-                                            title={
-                                                <div className="flex items-center space-x-2">
-                                                    <Globe size={14} />
-                                                    <span>URL List</span>
-                                                </div>
-                                            }
+                                    {/* 
+                                      Refactor: Use Tabs purely as navigation controller. 
+                                      Don't put CodeMirror inside Tabs children to avoid unmounting/mounting issues during animation/switching.
+                                    */}
+                                    <div className="bg-[#252526] border-b border-white/10 px-4 shrink-0">
+                                        <Tabs 
+                                            aria-label="Code Options" 
+                                            color="primary" 
+                                            variant="underlined"
+                                            selectedKey={selectedTab}
+                                            onSelectionChange={setSelectedTab}
+                                            classNames={{
+                                                tabList: "gap-6 w-full relative rounded-none p-0",
+                                                cursor: "w-full bg-primary",
+                                                tab: "max-w-fit px-2 h-10 text-sm text-gray-400 data-[selected=true]:text-white",
+                                                panel: "hidden" // Hide default panel content mechanism
+                                            }}
                                         >
-                                            <CodeMirror
-                                                value={(code as any).url}
-                                                height="100%"
-                                                extensions={[json()]}
-                                                theme={vscodeDark}
-                                                readOnly={true}
-                                                editable={false}
-                                                className="h-full"
+                                            <Tab 
+                                                key="url" 
+                                                title={
+                                                    <div className="flex items-center space-x-2">
+                                                        <Globe size={14} />
+                                                        <span>URL List</span>
+                                                    </div>
+                                                } 
                                             />
-                                        </Tab>
-                                        <Tab 
-                                            key="sapui5" 
-                                            title={
-                                                <div className="flex items-center space-x-2">
-                                                    <FileCode size={14} />
-                                                    <span>SAPUI5</span>
-                                                </div>
-                                            }
-                                        >
-                                            <CodeMirror
-                                                value={(code as any).sapui5}
-                                                height="100%"
-                                                extensions={[json()]}
-                                                theme={vscodeDark}
-                                                readOnly={true}
-                                                editable={false}
-                                                className="h-full"
+                                            <Tab 
+                                                key="sapui5" 
+                                                title={
+                                                    <div className="flex items-center space-x-2">
+                                                        <FileCode size={14} />
+                                                        <span>SAPUI5</span>
+                                                    </div>
+                                                } 
                                             />
-                                        </Tab>
-                                        <Tab 
-                                            key="csharp" 
-                                            title={
-                                                <div className="flex items-center space-x-2">
-                                                    <Terminal size={14} />
-                                                    <span>C# (HttpClient)</span>
-                                                </div>
-                                            }
-                                        >
-                                            <CodeMirror
-                                                value={(code as any).csharp}
-                                                height="100%"
-                                                extensions={[json()]}
-                                                theme={vscodeDark}
-                                                readOnly={true}
-                                                editable={false}
-                                                className="h-full"
+                                            <Tab 
+                                                key="csharp" 
+                                                title={
+                                                    <div className="flex items-center space-x-2">
+                                                        <Terminal size={14} />
+                                                        <span>C# (HttpClient)</span>
+                                                    </div>
+                                                } 
                                             />
-                                        </Tab>
-                                        <Tab 
-                                            key="java" 
-                                            title={
-                                                <div className="flex items-center space-x-2">
-                                                    <Coffee size={14} />
-                                                    <span>Java (Olingo)</span>
-                                                </div>
-                                            }
-                                        >
-                                            <CodeMirror
-                                                value={(code as any).java}
-                                                height="100%"
-                                                extensions={[json()]}
-                                                theme={vscodeDark}
-                                                readOnly={true}
-                                                editable={false}
-                                                className="h-full"
+                                            <Tab 
+                                                key="java" 
+                                                title={
+                                                    <div className="flex items-center space-x-2">
+                                                        <Coffee size={14} />
+                                                        <span>Java (Olingo)</span>
+                                                    </div>
+                                                } 
                                             />
-                                        </Tab>
-                                    </Tabs>
+                                        </Tabs>
+                                    </div>
+
+                                    <div className="flex-1 overflow-hidden p-0 relative">
+                                        <CodeMirror
+                                            value={currentCodeText}
+                                            height="100%"
+                                            className="h-full absolute inset-0" 
+                                            extensions={[json()]}
+                                            theme={vscodeDark}
+                                            readOnly={true}
+                                            editable={false}
+                                        />
+                                    </div>
                                 </div>
                             )}
                         </ModalBody>
@@ -162,7 +160,6 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                             </div>
                             <Button color="default" variant="light" onPress={onClose}>取消 (Cancel)</Button>
                             
-                            {/* Copy Button is always available now  */}
                             <Button color="secondary" variant="flat" onPress={handleCopy} startContent={<Copy size={16}/>}>
                                 复制 (Copy Code)
                             </Button>
