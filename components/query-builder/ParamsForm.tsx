@@ -153,7 +153,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         }
 
         const buildPaths = (entityName: string, parentPath: string, currentDepth: number): any[] => {
-            if (currentDepth >= 2) return [];
+            if (currentDepth >= 5) return []; // Increased depth limit to 5
             const entity = schema.entities.find(e => e.name === entityName);
             if (!entity) return [];
 
@@ -433,7 +433,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                                 if (item.type === 'placeholder') {
                                     return <SelectItem key="none" isReadOnly>无关联实体</SelectItem>;
                                 }
-                                const indent = item.level > 0 ? `${item.level * 12}px` : '0px';
+                                const indent = item.level > 0 ? `${item.level * 16}px` : '0px';
                                 return (
                                     <SelectItem key={item.name} value={item.name} textValue={item.name}>
                                         <div className="flex flex-col" style={{ paddingLeft: indent }}>
