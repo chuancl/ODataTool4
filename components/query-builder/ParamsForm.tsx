@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Input, Select, SelectItem, Checkbox, Selection, Button, Chip } from "@nextui-org/react";
-import { CheckSquare, ArrowDownAz, ArrowUpZa, CornerDownRight, Link2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Input, Select, SelectItem, Checkbox, Selection, Button, Chip, Tooltip } from "@nextui-org/react";
+import { CheckSquare, ArrowDownAz, ArrowUpZa, CornerDownRight, Link2, ChevronRight, ChevronDown, Wand2, Filter } from 'lucide-react';
 import { EntityType, ParsedSchema } from '@/utils/odata-helper';
+import { FilterBuilderModal } from './FilterBuilderModal';
 
 export interface SortItem {
     field: string;
@@ -42,6 +43,9 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     schema
 }) => {
     const ALL_KEY = '_ALL_';
+
+    // State for Filter Builder Modal
+    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
 
     // 本地状态：控制下拉框中哪些节点是"视觉上"展开的 (用于查看下级)
     // 这与 "是否选中" ($expand 参数) 分离开来
@@ -294,6 +298,15 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl bg-content1 shadow-sm border border-divider shrink-0">
+            {/* Filter Modal Component */}
+            <FilterBuilderModal 
+                isOpen={isFilterModalOpen}
+                onClose={() => setIsFilterModalOpen(false)}
+                currentFilter={filter}
+                onApply={setFilter}
+                currentSchema={currentSchema}
+            />
+
             <div className="md:col-span-3">
                 <Select
                     label="实体集 (Entity Set)"
@@ -309,7 +322,32 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             </div>
 
             <div className="md:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-4">
-                <Input label="过滤 ($filter)" placeholder="例如: Price gt 20" value={filter} onValueChange={setFilter} size="sm" variant="bordered" />
+                
+                {/* 过滤 ($filter) - 使用 Input + Button 触发 Modal */}
+                <div className="md:col-span-1 relative">
+                    <Input 
+                        label="过滤 ($filter)" 
+                        placeholder="例如: Price gt 20" 
+                        value={filter} 
+                        onValueChange={setFilter} 
+                        size="sm" 
+                        variant="bordered"
+                        endContent={
+                            <Tooltip content="打开过滤器构建器 (Builder)">
+                                <Button 
+                                    isIconOnly 
+                                    size="sm" 
+                                    variant="light" 
+                                    className="h-6 w-6 min-w-4 text-default-400 hover:text-primary"
+                                    onPress={() => setIsFilterModalOpen(true)}
+                                    isDisabled={!currentSchema}
+                                >
+                                    <Wand2 size={14} />
+                                </Button>
+                            </Tooltip>
+                        }
+                    />
+                </div>
 
                 {/* 排序 - 升序 */}
                 <div className="md:col-span-1">
