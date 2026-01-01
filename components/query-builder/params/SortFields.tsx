@@ -94,7 +94,6 @@ export const SortFields: React.FC<SortFieldsProps> = ({
                 variant="bordered"
                 classNames={commonClassNames}
                 items={sortOptions}
-                isMultiline={true}
             >
                 {(p) => (
                     <SelectItem key={p.name} value={p.name} textValue={p.name}>
@@ -120,7 +119,6 @@ export const SortFields: React.FC<SortFieldsProps> = ({
                 variant="bordered"
                 classNames={commonClassNames}
                 items={sortOptions}
-                isMultiline={true}
             >
                 {(p) => (
                     <SelectItem key={p.name} value={p.name} textValue={p.name}>
