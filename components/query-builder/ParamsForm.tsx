@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Select, SelectItem, Selection, Button, Tooltip } from "@nextui-org/react";
-import { Wand2, Filter } from 'lucide-react';
+import { ListFilter, Wand2 } from 'lucide-react';
 import { EntityType, ParsedSchema } from '@/utils/odata-helper';
 import { FilterBuilderModal } from './FilterBuilderModal';
 
@@ -112,7 +112,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             />
 
             {/* --- 左侧控制面板 (实体, 过滤, 分页) [col-span-3] --- */}
-            <div className="md:col-span-3 flex flex-col gap-3">
+            <div className="md:col-span-3 flex flex-col gap-2">
                 {/* 1. 实体集选择 */}
                 <Select
                     label="实体集 (Entity Set)"
@@ -129,29 +129,32 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     {(item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>}
                 </Select>
 
-                {/* 2. 工具栏：过滤按钮 + 分页控件 (一行显示) */}
-                <div className="flex items-center gap-2">
+                {/* 2. 工具栏：过滤 (Flex-1) + 分页 (Flex-None) */}
+                <div className="flex items-center gap-1 w-full">
                     <Tooltip content={filter || "构建过滤器 ($filter)"} placement="bottom">
                         <Button 
-                            isIconOnly
                             color={filter ? "primary" : "default"} 
-                            variant={filter ? "solid" : "bordered"}
+                            variant="bordered"
                             onPress={() => setIsFilterModalOpen(true)}
                             isDisabled={!currentSchema}
                             size="sm"
-                            className="min-w-10 h-10"
+                            startContent={filter ? <ListFilter size={16} /> : <Wand2 size={16} />}
+                            className="flex-1 justify-start h-8 min-h-8 px-2 relative"
                         >
-                            {filter ? <Filter size={16} /> : <Wand2 size={16} />}
+                            <span className="truncate text-xs">
+                                {filter ? "已过滤" : "过滤 Filter"}
+                            </span>
+                            {filter && (
+                                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary block" />
+                            )}
                         </Button>
                     </Tooltip>
 
-                    <div className="flex-1 h-10 border border-divider rounded-lg px-2 flex items-center bg-content2/30">
-                        <PaginationControls 
-                            top={top} setTop={setTop}
-                            skip={skip} setSkip={setSkip}
-                            count={count} setCount={setCount}
-                        />
-                    </div>
+                    <PaginationControls 
+                        top={top} setTop={setTop}
+                        skip={skip} setSkip={setSkip}
+                        count={count} setCount={setCount}
+                    />
                 </div>
             </div>
 

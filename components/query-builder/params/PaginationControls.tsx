@@ -1,5 +1,6 @@
 import React from 'react';
-import { Input, Checkbox, Tooltip } from "@nextui-org/react";
+import { Input, Button, Tooltip } from "@nextui-org/react";
+import { Hash, Calculator } from 'lucide-react';
 
 interface PaginationControlsProps {
     top: string;
@@ -16,45 +17,44 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
     count, setCount
 }) => {
     return (
-        <div className="flex items-center gap-2 flex-1">
+        <div className="flex items-center gap-1">
             <Input 
                 label="Top" 
-                placeholder="20"
                 value={top} 
                 onValueChange={setTop} 
                 size="sm" 
                 variant="bordered" 
-                className="w-16" 
+                className="w-[4.5rem]" 
                 classNames={{
-                    input: "text-center",
-                    label: "text-[10px]"
+                    input: "text-center font-mono",
+                    label: "text-[9px] text-default-400",
+                    inputWrapper: "h-8 min-h-8 px-1" // Force standard height
                 }}
             />
             <Input 
                 label="Skip" 
-                placeholder="0"
                 value={skip} 
                 onValueChange={setSkip} 
                 size="sm" 
                 variant="bordered" 
-                className="w-16"
+                className="w-[4.5rem]"
                 classNames={{
-                    input: "text-center",
-                    label: "text-[10px]"
+                    input: "text-center font-mono",
+                    label: "text-[9px] text-default-400",
+                    inputWrapper: "h-8 min-h-8 px-1" // Force standard height
                 }}
             />
-            <Tooltip content="包含总数 ($inlinecount / $count)">
-                <Checkbox 
-                    isSelected={count} 
-                    onValueChange={setCount} 
+            <Tooltip content={count ? "已启用计数 ($count=true)" : "启用计数 ($count)"}>
+                <Button
+                    isIconOnly
                     size="sm"
-                    classNames={{
-                        label: "text-tiny text-default-500",
-                        base: "m-0 p-0 gap-1"
-                    }}
+                    variant={count ? "solid" : "bordered"}
+                    color={count ? "primary" : "default"}
+                    onPress={() => setCount(!count)}
+                    className="w-8 h-8 min-w-8"
                 >
-                    Count
-                </Checkbox>
+                    <Hash size={14} className={count ? "text-white" : "text-default-500"} />
+                </Button>
             </Tooltip>
         </div>
     );
