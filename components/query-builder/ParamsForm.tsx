@@ -467,15 +467,13 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                                                     <div 
                                                         role="button"
                                                         className="p-0.5 hover:bg-default-200 rounded cursor-pointer text-default-500 z-50 flex items-center justify-center transition-colors"
-                                                        onMouseDown={(e) => {
-                                                            // 阻止焦点丢失导致的下拉框关闭
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                        }}
+                                                        // 阻止所有可能触发选中的事件冒泡
+                                                        onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                        onPointerUp={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                                                         onClick={(e) => {
-                                                            // 阻止点击事件冒泡到 SelectItem 导致触发选中
-                                                            e.preventDefault();
                                                             e.stopPropagation();
+                                                            e.preventDefault();
                                                             toggleTreeExpand(item.fullPath);
                                                         }}
                                                     >
