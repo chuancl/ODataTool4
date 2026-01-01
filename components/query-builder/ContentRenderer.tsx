@@ -8,6 +8,7 @@ import {
 interface ContentRendererProps {
     value: any;
     columnName?: string;
+    onExpand?: () => void; // 新增：用于触发外部展开逻辑
 }
 
 // 常见文件头魔数 (Base64前缀)
@@ -46,7 +47,7 @@ const EXTENSIONS: Record<string, { type: 'image' | 'video' | 'audio' | 'file', m
     'xml': { type: 'file', icon: FileCode },
 };
 
-export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnName }) => {
+export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnName, onExpand }) => {
     const { isOpen, onOpen, onOpenChange } = useDisclosure();
     const [previewContent, setPreviewContent] = useState<React.ReactNode>(null);
 
@@ -185,7 +186,15 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 color="secondary" 
                 startContent={<Table2 size={12}/>}
                 classNames={{ base: "h-5 text-[10px] px-1", content: "font-mono" }}
-                onClick={handlePreview}
+                onClick={(e) => {
+                    // 如果传入了 onExpand，优先执行展开逻辑
+                    if (onExpand) {
+                        e.stopPropagation();
+                        onExpand();
+                    } else {
+                        handlePreview();
+                    }
+                }}
                 className="cursor-pointer hover:bg-secondary/20 transition-colors"
             >
                 {detected.count} Items
@@ -201,7 +210,14 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 color="primary" 
                 startContent={<Braces size={12}/>}
                 classNames={{ base: "h-5 text-[10px] px-1", content: "font-mono" }}
-                onClick={handlePreview}
+                onClick={(e) => {
+                    if (onExpand) {
+                        e.stopPropagation();
+                        onExpand();
+                    } else {
+                        handlePreview();
+                    }
+                }}
                 className="cursor-pointer hover:bg-primary/20 transition-colors"
             >
                 Details

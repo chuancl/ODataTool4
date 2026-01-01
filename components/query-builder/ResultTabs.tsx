@@ -52,135 +52,31 @@ const isExpandableData = (value: any): boolean => {
 };
 
 // ----------------------------------------------------------------------
-// SubDataTable Component (For Expanded Rows)
+// Component: RecursiveDataTable
+// Reusable Table component that supports self-nesting
 // ----------------------------------------------------------------------
-const SubDataTable = ({ data }: { data: any[] }) => {
-    const columnHelper = createColumnHelper<any>();
-    const columns = useMemo(() => {
-        if (!data || data.length === 0) return [];
-        const keys = Object.keys(data[0]).filter(k => k !== '__metadata');
-        return keys.map(key => columnHelper.accessor(key, {
-            header: key,
-            cell: info => <ContentRenderer value={info.getValue()} columnName={key} />,
-        }));
-    }, [data]);
 
-    const table = useReactTable({
-        data,
-        columns,
-        getCoreRowModel: getCoreRowModel(),
-    });
+interface RecursiveDataTableProps {
+    data: any[];
+    isDark: boolean;
+    isRoot?: boolean; // If true, shows global actions like Delete/Export
+    onDelete?: () => void;
+    onExport?: () => void;
+    loading?: boolean;
+}
 
-    return (
-        <div className="border border-divider rounded-lg overflow-hidden bg-content1 shadow-sm">
-            <table className="w-full text-left text-xs">
-                <thead className="bg-default-100 border-b border-divider">
-                    {table.getHeaderGroups().map(headerGroup => (
-                        <tr key={headerGroup.id}>
-                            {headerGroup.headers.map(header => (
-                                <th key={header.id} className="p-2 font-semibold text-default-600">
-                                    {flexRender(header.column.columnDef.header, header.getContext())}
-                                </th>
-                            ))}
-                        </tr>
-                    ))}
-                </thead>
-                <tbody>
-                    {table.getRowModel().rows.map((row, idx) => (
-                        <tr key={row.id} className={`border-b border-divider/50 last:border-0 ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50'}`}>
-                            {row.getVisibleCells().map(cell => (
-                                <td key={cell.id} className="p-2 text-default-700">
-                                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                </td>
-                            ))}
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-};
-
-// ----------------------------------------------------------------------
-// ExpandedRowView Component (Master-Detail Content)
-// ----------------------------------------------------------------------
-const ExpandedRowView = ({ rowData }: { rowData: any }) => {
-    // 找出所有嵌套的属性（Expands）
-    const expandProps = useMemo(() => {
-        const props: { key: string, data: any[], type: 'array' | 'object' }[] = [];
-        Object.entries(rowData).forEach(([key, val]: [string, any]) => {
-            if (key !== '__metadata' && isExpandableData(val)) {
-                let normalizedData: any[] = [];
-                let type: 'array' | 'object' = 'object';
-
-                if (Array.isArray(val)) {
-                    normalizedData = val;
-                    type = 'array';
-                } else if (val && Array.isArray(val.results)) {
-                    normalizedData = val.results;
-                    type = 'array';
-                } else {
-                    normalizedData = [val]; // Single object as 1-row array
-                    type = 'object';
-                }
-                
-                props.push({ key, data: normalizedData, type });
-            }
-        });
-        return props;
-    }, [rowData]);
-
-    if (expandProps.length === 0) return <div className="p-4 text-default-400 italic text-xs">No expanded details available.</div>;
-
-    return (
-        <div className="p-4 bg-default-50/50 inner-shadow-sm">
-            <div className="flex items-center gap-2 mb-2 text-xs font-bold text-default-500 uppercase tracking-wider">
-                <Layers size={14} /> 关联详情 (Associated Details)
-            </div>
-            <div className="bg-background rounded-xl border border-divider overflow-hidden">
-                <Tabs 
-                    aria-label="Expanded Data" 
-                    variant="underlined"
-                    color="secondary"
-                    classNames={{
-                        tabList: "px-4 border-b border-divider bg-default-50",
-                        cursor: "w-full bg-secondary",
-                        tab: "h-10 text-xs",
-                        panel: "p-4"
-                    }}
-                >
-                    {expandProps.map(prop => (
-                        <Tab 
-                            key={prop.key} 
-                            title={
-                                <div className="flex items-center gap-2">
-                                    {prop.type === 'array' ? <LayoutList size={14} /> : <Braces size={14} />}
-                                    <span>{prop.key}</span>
-                                    <Chip size="sm" variant="flat" className="h-4 text-[9px] px-1">{prop.data.length}</Chip>
-                                </div>
-                            }
-                        >
-                            <SubDataTable data={prop.data} />
-                        </Tab>
-                    ))}
-                </Tabs>
-            </div>
-        </div>
-    );
-};
-
-
-export const ResultTabs: React.FC<ResultTabsProps> = ({
-    queryResult, rawJsonResult, rawXmlResult, loading, isDark,
-    onDelete, onExport, downloadFile
+const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({ 
+    data, 
+    isDark, 
+    isRoot = false, 
+    onDelete, 
+    onExport,
+    loading = false 
 }) => {
-    const editorTheme = isDark ? vscodeDark : githubLight;
     const tableContainerRef = useRef<HTMLDivElement>(null);
-    
-    // 初始化宽度使用 Window 宽度做兜底
     const [containerWidth, setContainerWidth] = useState(() => {
-        if (typeof window !== 'undefined') return Math.max(800, window.innerWidth - 64);
-        return 1200;
+        if (typeof window !== 'undefined') return Math.max(600, window.innerWidth - 100);
+        return 1000;
     });
 
     // --- Table State ---
@@ -206,7 +102,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     const columnHelper = createColumnHelper<any>();
     
     const columns = useMemo(() => {
-        if (queryResult.length === 0) return [];
+        if (!data || data.length === 0) return [];
         
         // 1. 定义固定列
         // Expander(32px) + Checkbox(40px) + Index(50px) = 122px
@@ -283,11 +179,11 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         });
 
         // 2. 处理数据列
-        const rawKeys = Object.keys(queryResult[0]).filter(key => key !== '__metadata');
+        const rawKeys = Object.keys(data[0]).filter(key => key !== '__metadata');
         if (rawKeys.length === 0) return [expanderColumn, selectColumn, indexColumn];
 
         // 采样前 20 行计算内容宽度
-        const sampleData = queryResult.slice(0, 20);
+        const sampleData = data.slice(0, 20);
         const columnMeta: Record<string, number> = {};
         let totalBaseWidth = 0;
         
@@ -334,7 +230,19 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
             return columnHelper.accessor(key, { 
                 id: key,
                 header: key, 
-                cell: info => <ContentRenderer value={info.getValue()} columnName={key} />,
+                cell: info => (
+                    <ContentRenderer 
+                        value={info.getValue()} 
+                        columnName={key} 
+                        // IMPORTANT: Pass expand handler. 
+                        // If cell content is an array/object chip, clicking it will expand the row.
+                        onExpand={
+                            isExpandableData(info.getValue()) 
+                            ? info.row.getToggleExpandedHandler() 
+                            : undefined
+                        }
+                    />
+                ),
                 size: finalWidth,
                 minSize: 60,
                 maxSize: 5000,
@@ -342,7 +250,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         });
 
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
-    }, [queryResult, containerWidth]);
+    }, [data, containerWidth]);
 
     // 初始化列顺序
     useEffect(() => {
@@ -352,7 +260,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     }, [columns.length]); 
 
     const table = useReactTable({
-        data: queryResult,
+        data,
         columns,
         state: {
             sorting,
@@ -379,6 +287,231 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     });
 
     return (
+        <div className="h-full flex flex-col bg-content1 overflow-hidden">
+            {isRoot && (
+                <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-end shrink-0">
+                    <div className="flex gap-2">
+                        {onDelete && <Button size="sm" color="danger" variant="light" onPress={onDelete} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
+                        {onExport && <Button size="sm" color="primary" variant="light" startContent={<Save size={14} />}>导出 (Export)</Button>}
+                    </div>
+                </div>
+            )}
+
+            <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
+                <table 
+                    className="w-full text-left border-collapse table-fixed"
+                    style={{ width: table.getTotalSize() }}
+                >
+                    <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
+                        {table.getHeaderGroups().map(headerGroup => (
+                            <tr key={headerGroup.id}>
+                                {headerGroup.headers.map(header => (
+                                    <th 
+                                        key={header.id} 
+                                        className="relative p-2 py-3 text-xs font-bold text-default-600 select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
+                                        style={{ width: header.getSize() }}
+                                        draggable={!header.isPlaceholder && !['expander', 'select', 'index'].includes(header.id)}
+                                        onDragStart={(e) => {
+                                            if (['expander', 'select', 'index'].includes(header.id)) return;
+                                            setDraggingColumn(header.column.id);
+                                            e.dataTransfer.effectAllowed = 'move';
+                                            e.currentTarget.style.opacity = '0.5';
+                                        }}
+                                        onDragEnd={(e) => {
+                                            e.currentTarget.style.opacity = '1';
+                                            setDraggingColumn(null);
+                                        }}
+                                        onDragOver={(e) => e.preventDefault()}
+                                        onDrop={(e) => {
+                                            e.preventDefault();
+                                            // Disable dragging fixed columns or dropping onto them
+                                            if (draggingColumn && draggingColumn !== header.column.id && !['expander', 'select', 'index'].includes(header.id)) {
+                                                const newOrder = [...columnOrder];
+                                                const dragIndex = newOrder.indexOf(draggingColumn);
+                                                const dropIndex = newOrder.indexOf(header.column.id);
+                                                if (dragIndex !== -1 && dropIndex !== -1) {
+                                                    newOrder.splice(dragIndex, 1);
+                                                    newOrder.splice(dropIndex, 0, draggingColumn);
+                                                    setColumnOrder(newOrder);
+                                                }
+                                            }
+                                        }}
+                                    >
+                                        <div className="flex items-center gap-1 w-full overflow-hidden justify-center">
+                                            {/* Drag Handle */}
+                                            {!['expander', 'select', 'index'].includes(header.id) && (
+                                                <GripVertical 
+                                                    size={12} 
+                                                    className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute left-1" 
+                                                />
+                                            )}
+                                            
+                                            {/* Header Content */}
+                                            {['expander', 'select', 'index'].includes(header.id) ? (
+                                                <div className="flex items-center justify-center w-full">
+                                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden pl-4"
+                                                    onClick={header.column.getToggleSortingHandler()}
+                                                >
+                                                    <span className="truncate" title={header.column.id}>
+                                                        {flexRender(header.column.columnDef.header, header.getContext())}
+                                                    </span>
+                                                    {{
+                                                        asc: <ChevronUp size={12} className="text-primary shrink-0" />,
+                                                        desc: <ChevronDown size={12} className="text-primary shrink-0" />,
+                                                    }[header.column.getIsSorted() as string] ?? null}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Resizer */}
+                                        {header.column.getCanResize() && (
+                                            <div
+                                                onMouseDown={header.getResizeHandler()}
+                                                onTouchStart={header.getResizeHandler()}
+                                                className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 transition-colors z-10 ${
+                                                    header.column.getIsResizing() ? 'bg-primary w-1' : 'bg-transparent'
+                                                }`}
+                                            />
+                                        )}
+                                    </th>
+                                ))}
+                            </tr>
+                        ))}
+                    </thead>
+                    <tbody>
+                        {table.getRowModel().rows.map((row, idx) => (
+                            <React.Fragment key={row.id}>
+                                <tr 
+                                    className={`
+                                        border-b border-divider/40 last:border-0 transition-colors
+                                        hover:bg-primary/5
+                                        ${row.getIsSelected() ? 'bg-primary/10' : (idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/30')}
+                                        ${row.getIsExpanded() ? 'bg-default-100 border-b-0' : ''}
+                                    `}
+                                >
+                                    {row.getVisibleCells().map(cell => (
+                                        <td 
+                                            key={cell.id} 
+                                            className="p-2 text-sm text-default-700 align-middle overflow-hidden border-r border-divider/10 last:border-0"
+                                            style={{ width: cell.column.getSize() }}
+                                        >
+                                            <div className="w-full">
+                                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                            </div>
+                                        </td>
+                                    ))}
+                                </tr>
+                                {/* EXPANDED ROW DETAIL */}
+                                {row.getIsExpanded() && (
+                                    <tr className="bg-default-50/50">
+                                        <td colSpan={row.getVisibleCells().length} className="p-0 border-b border-divider">
+                                            {/* Reuse the Recursive structure */}
+                                            <ExpandedRowView rowData={row.original} isDark={isDark} />
+                                        </td>
+                                    </tr>
+                                )}
+                            </React.Fragment>
+                        ))}
+                    </tbody>
+                </table>
+                
+                {data.length === 0 && !loading && (
+                    <div className="flex flex-col items-center justify-center h-40 text-default-400">
+                        <p>暂无数据</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// ----------------------------------------------------------------------
+// ExpandedRowView Component (Master-Detail Content)
+// ----------------------------------------------------------------------
+const ExpandedRowView = ({ rowData, isDark }: { rowData: any, isDark: boolean }) => {
+    // 找出所有嵌套的属性（Expands）
+    const expandProps = useMemo(() => {
+        const props: { key: string, data: any[], type: 'array' | 'object' }[] = [];
+        Object.entries(rowData).forEach(([key, val]: [string, any]) => {
+            if (key !== '__metadata' && isExpandableData(val)) {
+                let normalizedData: any[] = [];
+                let type: 'array' | 'object' = 'object';
+
+                if (Array.isArray(val)) {
+                    normalizedData = val;
+                    type = 'array';
+                } else if (val && Array.isArray(val.results)) {
+                    normalizedData = val.results;
+                    type = 'array';
+                } else {
+                    normalizedData = [val]; // Single object as 1-row array
+                    type = 'object';
+                }
+                
+                props.push({ key, data: normalizedData, type });
+            }
+        });
+        return props;
+    }, [rowData]);
+
+    if (expandProps.length === 0) return <div className="p-4 text-default-400 italic text-xs">No expanded details available.</div>;
+
+    return (
+        <div className="p-4 bg-default-50/50 inner-shadow-sm">
+            <div className="flex items-center gap-2 mb-2 text-xs font-bold text-default-500 uppercase tracking-wider">
+                <Layers size={14} /> 关联详情 (Associated Details)
+            </div>
+            <div className="bg-background rounded-xl border border-divider overflow-hidden flex flex-col min-h-[200px]">
+                <Tabs 
+                    aria-label="Expanded Data" 
+                    variant="underlined"
+                    color="secondary"
+                    classNames={{
+                        tabList: "px-4 border-b border-divider bg-default-50",
+                        cursor: "w-full bg-secondary",
+                        tab: "h-10 text-xs",
+                        panel: "p-0 flex-1 flex flex-col" // Important: p-0 to let table fill the panel
+                    }}
+                >
+                    {expandProps.map(prop => (
+                        <Tab 
+                            key={prop.key} 
+                            title={
+                                <div className="flex items-center gap-2">
+                                    {prop.type === 'array' ? <LayoutList size={14} /> : <Braces size={14} />}
+                                    <span>{prop.key}</span>
+                                    <Chip size="sm" variant="flat" className="h-4 text-[9px] px-1">{prop.data.length}</Chip>
+                                </div>
+                            }
+                        >
+                            {/* Recursively use RecursiveDataTable for nested data */}
+                            <RecursiveDataTable 
+                                data={prop.data} 
+                                isDark={isDark} 
+                                isRoot={false} // Sub-tables don't show global delete/export
+                            />
+                        </Tab>
+                    ))}
+                </Tabs>
+            </div>
+        </div>
+    );
+};
+
+
+export const ResultTabs: React.FC<ResultTabsProps> = ({
+    queryResult, rawJsonResult, rawXmlResult, loading, isDark,
+    onDelete, onExport, downloadFile
+}) => {
+    const editorTheme = isDark ? vscodeDark : githubLight;
+    
+    // --- Render ---
+
+    return (
         <div className="flex-1 min-h-0 bg-content1 rounded-xl border border-divider overflow-hidden flex flex-col shadow-sm">
             <Tabs
                 aria-label="Result Options"
@@ -400,150 +533,17 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                             <TableIcon size={14} />
                             <span>表格预览</span>
                             <Chip size="sm" variant="flat" className="h-4 text-[10px] px-1 ml-1">{queryResult.length}</Chip>
-                            {Object.keys(rowSelection).length > 0 && (
-                                <Chip size="sm" color="primary" variant="flat" className="h-4 text-[10px] px-1 ml-1">
-                                    选中 {Object.keys(rowSelection).length}
-                                </Chip>
-                            )}
                         </div>
                     }
                 >
-                    <div className="h-full flex flex-col">
-                        <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-end shrink-0">
-                            <div className="flex gap-2">
-                                <Button size="sm" color="danger" variant="light" onPress={onDelete} startContent={<Trash size={14} />}>删除 (Delete)</Button>
-                                <Button size="sm" color="primary" variant="light" startContent={<Save size={14} />}>导出 (Export)</Button>
-                            </div>
-                        </div>
-
-                        <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
-                            <table 
-                                className="w-full text-left border-collapse table-fixed"
-                                style={{ width: table.getTotalSize() }}
-                            >
-                                <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
-                                    {table.getHeaderGroups().map(headerGroup => (
-                                        <tr key={headerGroup.id}>
-                                            {headerGroup.headers.map(header => (
-                                                <th 
-                                                    key={header.id} 
-                                                    className="relative p-2 py-3 text-xs font-bold text-default-600 select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
-                                                    style={{ width: header.getSize() }}
-                                                    draggable={!header.isPlaceholder && !['expander', 'select', 'index'].includes(header.id)}
-                                                    onDragStart={(e) => {
-                                                        if (['expander', 'select', 'index'].includes(header.id)) return;
-                                                        setDraggingColumn(header.column.id);
-                                                        e.dataTransfer.effectAllowed = 'move';
-                                                        e.currentTarget.style.opacity = '0.5';
-                                                    }}
-                                                    onDragEnd={(e) => {
-                                                        e.currentTarget.style.opacity = '1';
-                                                        setDraggingColumn(null);
-                                                    }}
-                                                    onDragOver={(e) => e.preventDefault()}
-                                                    onDrop={(e) => {
-                                                        e.preventDefault();
-                                                        // Disable dragging fixed columns or dropping onto them
-                                                        if (draggingColumn && draggingColumn !== header.column.id && !['expander', 'select', 'index'].includes(header.id)) {
-                                                            const newOrder = [...columnOrder];
-                                                            const dragIndex = newOrder.indexOf(draggingColumn);
-                                                            const dropIndex = newOrder.indexOf(header.column.id);
-                                                            if (dragIndex !== -1 && dropIndex !== -1) {
-                                                                newOrder.splice(dragIndex, 1);
-                                                                newOrder.splice(dropIndex, 0, draggingColumn);
-                                                                setColumnOrder(newOrder);
-                                                            }
-                                                        }
-                                                    }}
-                                                >
-                                                    <div className="flex items-center gap-1 w-full overflow-hidden justify-center">
-                                                        {/* Drag Handle */}
-                                                        {!['expander', 'select', 'index'].includes(header.id) && (
-                                                            <GripVertical 
-                                                                size={12} 
-                                                                className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute left-1" 
-                                                            />
-                                                        )}
-                                                        
-                                                        {/* Header Content */}
-                                                        {['expander', 'select', 'index'].includes(header.id) ? (
-                                                            <div className="flex items-center justify-center w-full">
-                                                                {flexRender(header.column.columnDef.header, header.getContext())}
-                                                            </div>
-                                                        ) : (
-                                                            <div 
-                                                                className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden pl-4"
-                                                                onClick={header.column.getToggleSortingHandler()}
-                                                            >
-                                                                <span className="truncate" title={header.column.id}>
-                                                                    {flexRender(header.column.columnDef.header, header.getContext())}
-                                                                </span>
-                                                                {{
-                                                                    asc: <ChevronUp size={12} className="text-primary shrink-0" />,
-                                                                    desc: <ChevronDown size={12} className="text-primary shrink-0" />,
-                                                                }[header.column.getIsSorted() as string] ?? null}
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Resizer */}
-                                                    {header.column.getCanResize() && (
-                                                        <div
-                                                            onMouseDown={header.getResizeHandler()}
-                                                            onTouchStart={header.getResizeHandler()}
-                                                            className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 transition-colors z-10 ${
-                                                                header.column.getIsResizing() ? 'bg-primary w-1' : 'bg-transparent'
-                                                            }`}
-                                                        />
-                                                    )}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    ))}
-                                </thead>
-                                <tbody>
-                                    {table.getRowModel().rows.map((row, idx) => (
-                                        <React.Fragment key={row.id}>
-                                            <tr 
-                                                className={`
-                                                    border-b border-divider/40 last:border-0 transition-colors
-                                                    hover:bg-primary/5
-                                                    ${row.getIsSelected() ? 'bg-primary/10' : (idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/30')}
-                                                    ${row.getIsExpanded() ? 'bg-default-100 border-b-0' : ''}
-                                                `}
-                                            >
-                                                {row.getVisibleCells().map(cell => (
-                                                    <td 
-                                                        key={cell.id} 
-                                                        className="p-2 text-sm text-default-700 align-middle overflow-hidden border-r border-divider/10 last:border-0"
-                                                        style={{ width: cell.column.getSize() }}
-                                                    >
-                                                        <div className="w-full">
-                                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                                        </div>
-                                                    </td>
-                                                ))}
-                                            </tr>
-                                            {/* EXPANDED ROW DETAIL */}
-                                            {row.getIsExpanded() && (
-                                                <tr className="bg-default-50/50">
-                                                    <td colSpan={row.getVisibleCells().length} className="p-0 border-b border-divider">
-                                                        <ExpandedRowView rowData={row.original} />
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </React.Fragment>
-                                    ))}
-                                </tbody>
-                            </table>
-                            
-                            {queryResult.length === 0 && !loading && (
-                                <div className="flex flex-col items-center justify-center h-40 text-default-400">
-                                    <p>暂无数据</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                    <RecursiveDataTable 
+                        data={queryResult} 
+                        isDark={isDark}
+                        isRoot={true}
+                        onDelete={onDelete}
+                        onExport={onExport}
+                        loading={loading}
+                    />
                 </Tab>
 
                 {/* Tab 2: JSON 预览 (CodeMirror) */}
