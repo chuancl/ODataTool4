@@ -27,7 +27,7 @@ interface RecursiveDataTableProps {
     onDelete?: () => void;
     onExport?: () => void;
     loading?: boolean;
-    parentSelected?: boolean; // (Legacy/Optional) Can still be used for initial state
+    parentSelected?: boolean; 
     entityName?: string;
 }
 
@@ -44,7 +44,6 @@ const updateRecursiveSelection = (data: any, isSelected: boolean) => {
     // 如果是对象，设置标记
     if (typeof data === 'object') {
         // 直接修改数据对象，添加/更新 __selected 属性
-        // 注意：这是对原始数据的引用修改，即使组件卸载，数据状态也会保留
         data['__selected'] = isSelected;
 
         // 继续递归查找子属性
@@ -69,6 +68,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     onDelete, 
     onExport, 
     loading = false,
+    parentSelected = false,
     entityName = 'Main'
 }) => {
     const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -84,25 +84,21 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const [expanded, setExpanded] = useState<ExpandedState>({});
     const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 
-    // --- 1. 初始化选中状态 ---
-    // 组件挂载时，根据 data 中的 __selected 属性恢复 rowSelection 状态
+    // --- 1. 初始化及同步选中状态 ---
+    // 监听 data 或 parentSelected 的变化，重新计算 rowSelection
+    // 这样既能在初始化时恢复状态，也能在父级全选/全不选时（通过 parentSelected 变化）强制同步子表
     useEffect(() => {
-        const initialSelection: RowSelectionState = {};
-        let hasSelection = false;
+        const newSelection: RowSelectionState = {};
         
         data.forEach((row, index) => {
-            // 如果 __selected 为 true (明确选中) 
-            // 如果 __selected 未定义 (undefined)，默认视为未选中 (或者根据需求默认全选，这里设为默认不选)
+            // 只有当 __selected 明确为 true 时才选中
             if (row['__selected'] === true) {
-                initialSelection[index] = true;
-                hasSelection = true;
+                newSelection[index] = true;
             }
         });
         
-        if (hasSelection) {
-            setRowSelection(initialSelection);
-        }
-    }, [data]);
+        setRowSelection(newSelection);
+    }, [data, parentSelected]);
 
     // 监听容器宽度变化
     useEffect(() => {
