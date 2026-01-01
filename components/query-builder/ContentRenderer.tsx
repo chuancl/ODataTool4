@@ -115,8 +115,9 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                  return { type: 'image', src: `data:${fallbackMime};base64,${strVal}`, mode: 'base64_fallback', mime: fallbackMime };
             }
 
-            // D. 纯二进制数据
-            return { type: 'binary', length: strVal.length, content: strVal };
+            // D. 纯二进制数据 (Removed: Description 等长文本容易被误判为二进制)
+            // 只有当明确识别出文件头或列名特征时才渲染为多媒体，否则默认回退到文本
+            // return { type: 'binary', length: strVal.length, content: strVal };
         }
 
         // 3. 普通文本
@@ -140,7 +141,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 </div>
             );
             onOpen();
-        } else if (detected.type === 'binary' || detected.type === 'text') {
+        } else if (detected.type === 'text') { // Explicitly check text as binary was removed
             setPreviewContent(
                 <div className="whitespace-pre-wrap break-all font-mono text-xs bg-content2 p-4 rounded max-h-[60vh] overflow-auto">
                     {String(value)}
@@ -208,11 +209,10 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         );
     }
 
-    if (detected.type === 'file' || detected.type === 'binary') {
+    if (detected.type === 'file') {
         const Icon = detected.icon || File;
-        const label = detected.type === 'binary' 
-            ? `Binary (${Math.round(detected.length! / 1024)} KB)` 
-            : `${detected.mime?.split('/')[1]?.toUpperCase() || 'FILE'}`;
+        // Removed binary label check logic as binary type is deprecated
+        const label = `${detected.mime?.split('/')[1]?.toUpperCase() || 'FILE'}`;
 
         return (
             <div className="flex items-center gap-2 bg-content2/50 p-1.5 rounded-lg border border-divider max-w-[200px]">

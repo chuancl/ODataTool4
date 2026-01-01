@@ -42,12 +42,12 @@ const App: React.FC = () => {
     const pagePath = 'dashboard.html';
     
     if (targetUrl) {
-      // Fix: Use browser.runtime.getURL instead of chrome.runtime.getURL
-      const dashboardUrl = browser.runtime.getURL(`${pagePath}#url=${encodeURIComponent(targetUrl)}`);
+      // Fix: Use chrome.runtime.getURL instead of browser.runtime.getURL
+      const dashboardUrl = chrome.runtime.getURL(`${pagePath}#url=${encodeURIComponent(targetUrl)}`);
       browser.tabs.create({ url: dashboardUrl });
     } else {
-      // Fix: Use browser.runtime.getURL instead of chrome.runtime.getURL
-      const dashboardUrl = browser.runtime.getURL(pagePath);
+      // Fix: Use chrome.runtime.getURL instead of browser.runtime.getURL
+      const dashboardUrl = chrome.runtime.getURL(pagePath);
       browser.tabs.create({ url: dashboardUrl });
     }
   };
