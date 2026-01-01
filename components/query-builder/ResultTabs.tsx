@@ -71,14 +71,15 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         if (rawKeys.length === 0) return [];
 
         // 1. 计算每一列的“内容基准宽度”
-        // 采样前 50 行数据，获取更准确的长度分布
-        const sampleData = queryResult.slice(0, 50);
+        // 采样前 20 行数据 (用户要求：减少采样数量，只需相对美观)
+        const sampleData = queryResult.slice(0, 20);
         const columnMeta: Record<string, { baseWidth: number }> = {};
         let totalBaseWidth = 0;
         
         rawKeys.forEach(key => {
             // 表头权重 (表头通常有加粗、排序图标等，给予 1.3 倍字符权重)
-            let maxWeightedLen = key.length * 1.3; 
+            // 确保表头至少保留一定宽度（例如 4个字符宽），防止极短的列名拥挤
+            let maxWeightedLen = Math.max(key.length * 1.3, 4); 
             
             sampleData.forEach(row => {
                 const val = row[key];
@@ -123,10 +124,11 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         });
 
         // 2. 决定是否铺满屏幕 (Responsive Fill)
-        // 减去一些滚动条预留空间 (16px)
-        const availableWidth = containerWidth > 0 ? containerWidth - 16 : 0;
+        // 核心大前提：如果内容不足以撑满屏幕，优先按比例扩宽各个列，让表格铺满全屏。
+        // contentRect.width 不包含滚动条，减去 2px 作为边框缓冲，确保不触发横向滚动条
+        const availableWidth = containerWidth > 0 ? containerWidth - 2 : 0;
         
-        // 核心逻辑：如果 "总基准宽度" < "屏幕可用宽度"，则按比例拉伸所有列
+        // 如果 "总基准宽度" < "屏幕可用宽度"，则按比例拉伸所有列
         // 否则，保持基准宽度，允许横向滚动
         const shouldScale = availableWidth > 0 && totalBaseWidth < availableWidth;
         const scaleRatio = shouldScale ? (availableWidth / totalBaseWidth) : 1;
