@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Tabs, Tab } from "@nextui-org/react";
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from "@nextui-org/react";
 import { FileCode, Trash2, Copy, Globe, Terminal, Coffee } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
@@ -15,31 +15,34 @@ interface CodeModalProps {
 }
 
 export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code, action, onExecute }) => {
-    // 使用 React.Key 类型以匹配 NextUI Tabs
-    const [selectedTab, setSelectedTab] = useState<string | number>('url');
+    const [selectedTab, setSelectedTab] = useState<string>('url');
 
-    // 每次打开时重置 Tab 到默认值，避免状态混乱
+    // 每次打开时重置 Tab 到默认值
     useEffect(() => {
         if (isOpen) {
             setSelectedTab('url');
         }
     }, [isOpen]);
 
-    // 如果 code 是字符串，说明是单视图模式
     const isSingleMode = typeof code === 'string';
 
-    // 计算当前需要显示的代码内容
     const currentCodeText = useMemo(() => {
         if (isSingleMode) return (code as string) || '';
-        
-        // 多语言模式，根据 selectedTab 返回对应代码
         const codeObj = code as { [key: string]: string };
-        return codeObj[selectedTab as string] || '';
+        return codeObj[selectedTab] || '';
     }, [code, isSingleMode, selectedTab]);
 
     const handleCopy = () => {
         navigator.clipboard.writeText(currentCodeText);
     };
+
+    // Manual Tab Definition (Safe & Simple)
+    const tabOptions = [
+        { key: 'url', label: 'URL List', icon: Globe },
+        { key: 'sapui5', label: 'SAPUI5', icon: FileCode },
+        { key: 'csharp', label: 'C# (HttpClient)', icon: Terminal },
+        { key: 'java', label: 'Java (Olingo)', icon: Coffee },
+    ];
 
     return (
         <Modal 
@@ -48,7 +51,6 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
             size="4xl" 
             scrollBehavior="inside"
             isDismissable={false}
-            // Remove manual shouldBlockScroll to rely on NextUI default handling which avoids cleanup race conditions
         >
             <ModalContent>
                 {(onClose) => (
@@ -80,70 +82,30 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                 </div>
                             ) : (
                                 <div className="flex flex-col h-[500px]">
-                                    {/* 
-                                      Tabs Controller
-                                    */}
-                                    <div className="bg-[#252526] border-b border-white/10 px-4 shrink-0">
-                                        <Tabs 
-                                            aria-label="Code Options" 
-                                            color="primary" 
-                                            variant="underlined"
-                                            selectedKey={selectedTab}
-                                            onSelectionChange={setSelectedTab}
-                                            classNames={{
-                                                tabList: "gap-6 w-full relative rounded-none p-0",
-                                                cursor: "w-full bg-primary",
-                                                tab: "max-w-fit px-2 h-10 text-sm text-gray-400 data-[selected=true]:text-white",
-                                                panel: "hidden" // Hide default panel content mechanism
-                                            }}
-                                        >
-                                            <Tab 
-                                                key="url" 
-                                                title={
-                                                    <div className="flex items-center space-x-2">
-                                                        <Globe size={14} />
-                                                        <span>URL List</span>
-                                                    </div>
-                                                } 
-                                            />
-                                            <Tab 
-                                                key="sapui5" 
-                                                title={
-                                                    <div className="flex items-center space-x-2">
-                                                        <FileCode size={14} />
-                                                        <span>SAPUI5</span>
-                                                    </div>
-                                                } 
-                                            />
-                                            <Tab 
-                                                key="csharp" 
-                                                title={
-                                                    <div className="flex items-center space-x-2">
-                                                        <Terminal size={14} />
-                                                        <span>C# (HttpClient)</span>
-                                                    </div>
-                                                } 
-                                            />
-                                            <Tab 
-                                                key="java" 
-                                                title={
-                                                    <div className="flex items-center space-x-2">
-                                                        <Coffee size={14} />
-                                                        <span>Java (Olingo)</span>
-                                                    </div>
-                                                } 
-                                            />
-                                        </Tabs>
+                                    {/* Custom Tabs Header - Replaces NextUI Tabs to prevent unmounting bugs */}
+                                    <div className="bg-[#252526] border-b border-white/10 px-4 shrink-0 flex gap-6 select-none">
+                                        {tabOptions.map((item) => (
+                                            <button
+                                                key={item.key}
+                                                onClick={() => setSelectedTab(item.key)}
+                                                type="button"
+                                                className={`
+                                                    group flex items-center gap-2 h-10 text-sm border-b-2 transition-all outline-none cursor-pointer bg-transparent p-0 px-1
+                                                    ${selectedTab === item.key 
+                                                        ? 'border-primary text-white font-medium' 
+                                                        : 'border-transparent text-gray-400 hover:text-gray-300'
+                                                    }
+                                                `}
+                                            >
+                                                <item.icon size={14} className={selectedTab === item.key ? "text-primary" : "group-hover:text-gray-300"} />
+                                                <span>{item.label}</span>
+                                            </button>
+                                        ))}
                                     </div>
 
                                     <div className="flex-1 overflow-hidden relative">
-                                        {/* 
-                                          Use key={selectedTab} to force a full remount of CodeMirror when switching tabs.
-                                          This prevents internal state issues in CodeMirror when content/language changes rapidly inside a Modal,
-                                          which can lead to errors that block the Modal cleanup process.
-                                        */}
                                         <CodeMirror
-                                            key={String(selectedTab)}
+                                            key={selectedTab} // Force remount on tab switch
                                             value={currentCodeText}
                                             height="100%"
                                             className="h-full absolute inset-0"
