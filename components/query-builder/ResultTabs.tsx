@@ -9,6 +9,7 @@ import { xml } from '@codemirror/lang-xml';
 import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { githubLight } from '@uiw/codemirror-theme-github';
 import { RecursiveDataTable } from './table/RecursiveDataTable';
+import { ParsedSchema } from '@/utils/odata-helper';
 
 interface ResultTabsProps {
     queryResult: any[];
@@ -19,12 +20,13 @@ interface ResultTabsProps {
     onDelete: () => void;
     onExport: () => void;
     downloadFile: (content: string, filename: string, type: 'json' | 'xml') => void;
-    entityName?: string; // 新增：实体名称
+    entityName?: string; 
+    schema: ParsedSchema | null; // 新增
 }
 
 export const ResultTabs: React.FC<ResultTabsProps> = ({
     queryResult, rawJsonResult, rawXmlResult, loading, isDark,
-    onDelete, onExport, downloadFile, entityName
+    onDelete, onExport, downloadFile, entityName, schema
 }) => {
     const editorTheme = isDark ? vscodeDark : githubLight;
     
@@ -63,6 +65,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                         onExport={onExport}
                         loading={loading}
                         entityName={entityName}
+                        schema={schema} // 传递 schema
                     />
                 </Tab>
 

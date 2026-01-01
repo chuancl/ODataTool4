@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Checkbox } from "@nextui-org/react";
+import { Button, Checkbox, Tooltip } from "@nextui-org/react";
 import { 
-    Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight
+    Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight, Key, Link2
 } from 'lucide-react';
 import { 
     useReactTable, 
@@ -19,6 +19,7 @@ import { ContentRenderer } from '../ContentRenderer';
 import { isExpandableData } from './utils';
 import { exportToExcel } from './excel-export';
 import { ExpandedRowView } from './ExpandedRowView';
+import { ParsedSchema } from '@/utils/odata-helper';
 
 interface RecursiveDataTableProps {
     data: any[];
@@ -29,6 +30,7 @@ interface RecursiveDataTableProps {
     loading?: boolean;
     parentSelected?: boolean; 
     entityName?: string;
+    schema?: ParsedSchema | null; // 新增: 接收 schema 以识别 PK/FK
 }
 
 // 递归更新数据的选中状态
@@ -69,7 +71,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     onExport, 
     loading = false,
     parentSelected = false,
-    entityName = 'Main'
+    entityName = 'Main',
+    schema
 }) => {
     const tableContainerRef = useRef<HTMLDivElement>(null);
     const [containerWidth, setContainerWidth] = useState(() => {
@@ -85,18 +88,13 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 
     // --- 1. 初始化及同步选中状态 ---
-    // 监听 data 或 parentSelected 的变化，重新计算 rowSelection
-    // 这样既能在初始化时恢复状态，也能在父级全选/全不选时（通过 parentSelected 变化）强制同步子表
     useEffect(() => {
         const newSelection: RowSelectionState = {};
-        
         data.forEach((row, index) => {
-            // 只有当 __selected 明确为 true 时才选中
             if (row['__selected'] === true) {
                 newSelection[index] = true;
             }
         });
-        
         setRowSelection(newSelection);
     }, [data, parentSelected]);
 
@@ -111,6 +109,49 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         observer.observe(tableContainerRef.current);
         return () => observer.disconnect();
     }, []);
+
+    // --- Identify PKs & FKs based on Schema ---
+    const { pkSet, fkSet, fkInfoMap } = useMemo(() => {
+        const pkSet = new Set<string>();
+        const fkSet = new Set<string>();
+        const fkInfoMap = new Map<string, string>(); // fieldName -> targetEntity
+
+        if (schema && entityName && schema.entities) {
+            // 1. Resolve Entity Name: entityName might be an EntitySet (plural) or EntityType (singular)
+            let entityType = schema.entities.find(e => e.name === entityName);
+            if (!entityType) {
+                // Try finding by EntitySet mapping
+                const es = schema.entitySets.find(s => s.name === entityName);
+                if (es) {
+                    const typeName = es.entityType.split('.').pop();
+                    entityType = schema.entities.find(e => e.name === typeName);
+                }
+            }
+            // Fallback: try removing 's' or matching startsWith
+            if (!entityType) {
+                 entityType = schema.entities.find(e => entityName.startsWith(e.name));
+            }
+
+            if (entityType) {
+                // PKs
+                entityType.keys.forEach(k => pkSet.add(k));
+
+                // FKs
+                entityType.navigationProperties.forEach(nav => {
+                    if (nav.constraints) {
+                        nav.constraints.forEach(c => {
+                            fkSet.add(c.sourceProperty);
+                            let target = nav.targetType || "Entity";
+                            if (target.startsWith('Collection(')) target = target.slice(11, -1);
+                            target = target.split('.').pop() || target;
+                            fkInfoMap.set(c.sourceProperty, target);
+                        });
+                    }
+                });
+            }
+        }
+        return { pkSet, fkSet, fkInfoMap };
+    }, [schema, entityName]);
 
     // --- Smart Column Width Algorithm ---
     const columnHelper = createColumnHelper<any>();
@@ -143,7 +184,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             enableResizing: false,
         });
 
-        // Select Column (Modified for Cascade)
+        // Select Column
         const selectColumn = columnHelper.display({
             id: 'select',
             header: ({ table }) => (
@@ -153,10 +194,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         isIndeterminate={table.getIsSomeRowsSelected()}
                         isSelected={table.getIsAllRowsSelected()}
                         onValueChange={(val) => {
-                            // 全选/全不选处理
                             const isSelected = !!val;
                             table.toggleAllRowsSelected(isSelected);
-                            // 递归更新所有数据
                             updateRecursiveSelection(data, isSelected);
                         }}
                         aria-label="Select all"
@@ -171,9 +210,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         isSelected={row.getIsSelected()}
                         onValueChange={(val) => {
                             const isSelected = !!val;
-                            // 1. 更新 React Table 内部状态
                             row.toggleSelected(isSelected);
-                            // 2. 递归更新数据对象上的 __selected 标记
                             updateRecursiveSelection(row.original, isSelected);
                         }}
                         aria-label="Select row"
@@ -241,10 +278,32 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 if (remaining > 0 && remaining < 100) finalWidth += remaining;
             }
             currentTotalWidth += finalWidth;
+            
+            // Check for PK/FK
+            const isPK = pkSet.has(key);
+            const isFK = fkSet.has(key);
+            const fkTarget = fkInfoMap.get(key);
 
             return columnHelper.accessor(key, { 
                 id: key,
-                header: key, 
+                // Custom Header with Icons
+                header: () => (
+                    <div className="flex items-center gap-1.5">
+                        {isPK && (
+                            <Tooltip content="Primary Key">
+                                <Key size={12} className="text-warning-500 shrink-0 fill-warning-500/20" />
+                            </Tooltip>
+                        )}
+                        {isFK && (
+                            <Tooltip content={`Foreign Key -> ${fkTarget}`}>
+                                <Link2 size={12} className="text-secondary-500 shrink-0" />
+                            </Tooltip>
+                        )}
+                        <span className={isPK ? "font-bold text-foreground" : isFK ? "text-secondary-600 font-medium" : ""}>
+                            {key}
+                        </span>
+                    </div>
+                ),
                 cell: info => (
                     <ContentRenderer 
                         value={info.getValue()} 
@@ -263,7 +322,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         });
 
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
-    }, [data, containerWidth]);
+    }, [data, containerWidth, pkSet, fkSet, fkInfoMap]);
 
     useEffect(() => {
         if (columns.length > 0) {
@@ -293,8 +352,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     });
 
     const handleExport = () => {
-        // 导出时，传入根节点数据。exportToExcel 内部会根据 __selected 字段进行过滤
-        // 注意：这里我们传入完整数据，让导出函数去遍历和筛选，因为子组件可能没有渲染（table.getSelectedRowModel只包含当前层级）
         exportToExcel(data, entityName);
     };
 
@@ -415,6 +472,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                                 rowData={row.original} 
                                                 isDark={isDark} 
                                                 parentSelected={row.getIsSelected()} 
+                                                schema={schema} // 传递 schema
+                                                parentEntityName={entityName} // 传递当前实体名作为父级
                                             />
                                         </td>
                                     </tr>

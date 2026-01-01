@@ -3,20 +3,33 @@ import { Chip, Tabs, Tab } from "@nextui-org/react";
 import { Layers, LayoutList, Braces } from 'lucide-react';
 import { isExpandableData } from './utils';
 import { RecursiveDataTable } from './RecursiveDataTable';
+import { ParsedSchema } from '@/utils/odata-helper';
 
 interface ExpandedRowViewProps {
     rowData: any;
     isDark: boolean;
     parentSelected: boolean;
+    schema?: ParsedSchema | null; // 新增
+    parentEntityName?: string; // 新增：用于查找导航属性的目标类型
 }
 
 // ----------------------------------------------------------------------
 // ExpandedRowView Component (Master-Detail Content)
 // ----------------------------------------------------------------------
-export const ExpandedRowView: React.FC<ExpandedRowViewProps> = ({ rowData, isDark, parentSelected }) => {
-    // 找出所有嵌套的属性（Expands）
+export const ExpandedRowView: React.FC<ExpandedRowViewProps> = ({ 
+    rowData, isDark, parentSelected, schema, parentEntityName 
+}) => {
+    // 找出所有嵌套的属性（Expands），并尝试解析对应的实体类型
     const expandProps = useMemo(() => {
-        const props: { key: string, data: any[], type: 'array' | 'object' }[] = [];
+        const props: { key: string, data: any[], type: 'array' | 'object', childEntityName?: string }[] = [];
+        
+        // 尝试获取父级实体定义
+        let parentEntityType = null;
+        if (schema && parentEntityName) {
+            parentEntityType = schema.entities.find(e => e.name === parentEntityName) ||
+                               schema.entities.find(e => parentEntityName.startsWith(e.name)); // 简单回退
+        }
+
         Object.entries(rowData).forEach(([key, val]: [string, any]) => {
             if (key !== '__metadata' && isExpandableData(val)) {
                 let normalizedData: any[] = [];
@@ -33,11 +46,22 @@ export const ExpandedRowView: React.FC<ExpandedRowViewProps> = ({ rowData, isDar
                     type = 'object';
                 }
                 
-                props.push({ key, data: normalizedData, type });
+                // 尝试解析子实体的类型名称
+                let childEntityName = key;
+                if (parentEntityType) {
+                    const nav = parentEntityType.navigationProperties.find(n => n.name === key);
+                    if (nav && nav.targetType) {
+                        let target = nav.targetType;
+                        if (target.startsWith('Collection(')) target = target.slice(11, -1);
+                        childEntityName = target.split('.').pop() || target;
+                    }
+                }
+
+                props.push({ key, data: normalizedData, type, childEntityName });
             }
         });
         return props;
-    }, [rowData]);
+    }, [rowData, schema, parentEntityName]);
 
     if (expandProps.length === 0) return <div className="p-4 text-default-400 italic text-xs">No expanded details available.</div>;
 
@@ -69,12 +93,14 @@ export const ExpandedRowView: React.FC<ExpandedRowViewProps> = ({ rowData, isDar
                                 </div>
                             }
                         >
-                            {/* Recursively use RecursiveDataTable for nested data, passing parent selection state */}
+                            {/* Recursively use RecursiveDataTable for nested data, passing schema and child entity name */}
                             <RecursiveDataTable 
                                 data={prop.data} 
                                 isDark={isDark} 
                                 isRoot={false} // Sub-tables don't show global delete/export
                                 parentSelected={parentSelected}
+                                schema={schema}
+                                entityName={prop.childEntityName}
                             />
                         </Tab>
                     ))}
