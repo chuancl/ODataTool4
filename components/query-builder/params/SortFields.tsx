@@ -66,11 +66,17 @@ export const SortFields: React.FC<SortFieldsProps> = ({
         updateSortItems(selectedSet, 'desc');
     };
 
+    const commonClassNames = {
+        trigger: "h-14 min-h-14 border-2 border-default-200 data-[hover=true]:border-default-400",
+        label: "text-[10px] font-medium text-default-500",
+        value: "text-small"
+    };
+
     if (!currentSchema) {
         return (
             <>
-                <Input isDisabled label="升序" placeholder="需先选择实体" size="sm" variant="bordered" />
-                <Input isDisabled label="降序" placeholder="需先选择实体" size="sm" variant="bordered" />
+                <Input isDisabled label="升序" placeholder="需先选择实体" variant="bordered" classNames={{ inputWrapper: commonClassNames.trigger, label: commonClassNames.label }} />
+                <Input isDisabled label="降序" placeholder="需先选择实体" variant="bordered" classNames={{ inputWrapper: commonClassNames.trigger, label: commonClassNames.label }} />
             </>
         );
     }
@@ -85,9 +91,8 @@ export const SortFields: React.FC<SortFieldsProps> = ({
                 selectedKeys={currentAscKeys}
                 onSelectionChange={handleAscChange}
                 disabledKeys={Array.from(currentDescKeys)} 
-                size="sm"
                 variant="bordered"
-                classNames={{ value: "text-xs" }}
+                classNames={commonClassNames}
                 items={sortOptions}
                 isMultiline={true}
                 startContent={<ArrowDownAz size={14} className="text-default-400" />}
@@ -113,9 +118,8 @@ export const SortFields: React.FC<SortFieldsProps> = ({
                 selectedKeys={currentDescKeys}
                 onSelectionChange={handleDescChange}
                 disabledKeys={Array.from(currentAscKeys)} 
-                size="sm"
                 variant="bordered"
-                classNames={{ value: "text-xs" }}
+                classNames={commonClassNames}
                 items={sortOptions}
                 isMultiline={true}
                 startContent={<ArrowUpZa size={14} className="text-default-400" />}

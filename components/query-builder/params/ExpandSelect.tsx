@@ -119,8 +119,14 @@ export const ExpandSelect: React.FC<ExpandSelectProps> = ({
         setExpand(Array.from(newSet).join(','));
     };
 
+    const commonClassNames = {
+        trigger: "h-14 min-h-14 border-2 border-default-200 data-[hover=true]:border-default-400",
+        label: "text-[10px] font-medium text-default-500",
+        value: "text-small"
+    };
+
     if (!currentSchema) {
-        return <Select isDisabled label="展开 ($expand)" placeholder="需先选择实体" size="sm" variant="bordered"><SelectItem key="placeholder">Placeholder</SelectItem></Select>;
+        return <Select isDisabled label="展开 ($expand)" placeholder="需先选择实体" variant="bordered" classNames={commonClassNames}><SelectItem key="placeholder">Placeholder</SelectItem></Select>;
     }
 
     return (
@@ -130,9 +136,8 @@ export const ExpandSelect: React.FC<ExpandSelectProps> = ({
             selectionMode="multiple"
             selectedKeys={currentExpandKeys}
             onSelectionChange={handleExpandChange}
-            size="sm"
             variant="bordered"
-            classNames={{ value: "text-xs" }}
+            classNames={commonClassNames}
             items={expandItems}
         >
             {(item) => {
