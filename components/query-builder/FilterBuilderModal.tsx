@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Tabs, Tab, Listbox, ListboxItem, ScrollShadow, Textarea, Chip, Tooltip } from "@nextui-org/react";
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Tabs, Tab, ScrollShadow, Textarea, Tooltip } from "@nextui-org/react";
 import { EntityType } from '@/utils/odata-helper';
-import { Calculator, Calendar, Type, FunctionSquare, Braces, MousePointerClick, Eraser, Check } from 'lucide-react';
+import { Calculator, Calendar, Type, FunctionSquare, Braces, Eraser, Check, Link2 } from 'lucide-react';
 
 interface FilterBuilderModalProps {
     isOpen: boolean;
@@ -9,6 +9,7 @@ interface FilterBuilderModalProps {
     currentFilter: string;
     onApply: (filter: string) => void;
     currentSchema: EntityType | null;
+    expandedProperties?: any[]; // 新增：支持扩展属性
 }
 
 const OPERATORS = {
@@ -37,8 +38,8 @@ const OPERATORS = {
 
 const FUNCTIONS = {
     string: [
-        { label: '包含 (substringof)', value: "substringof('value', Field)", desc: "判断字段是否包含某值 (V2)" },
-        { label: '包含 (contains)', value: "contains(Field, 'value')", desc: "判断字段是否包含某值 (V4)" },
+        { label: '包含 (substringof)', value: "substringof('value', Field)", desc: "判断 Field 是否包含 'value' (V2)" },
+        { label: '包含 (contains)', value: "contains(Field, 'value')", desc: "判断 Field 是否包含 'value' (V4)" },
         { label: '以...结尾 (endswith)', value: "endswith(Field, 'value')" },
         { label: '以...开头 (startswith)', value: "startswith(Field, 'value')" },
         { label: '长度 (length)', value: "length(Field)" },
@@ -66,17 +67,36 @@ const FUNCTIONS = {
 };
 
 export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
-    isOpen, onClose, currentFilter, onApply, currentSchema
+    isOpen, onClose, currentFilter, onApply, currentSchema, expandedProperties = []
 }) => {
     const [expression, setExpression] = useState(currentFilter || '');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [selectedField, setSelectedField] = useState<string | null>(null); // 当前选中的字段
 
     // Sync expression when modal opens
     useEffect(() => {
         if (isOpen) {
             setExpression(currentFilter || '');
+            setSelectedField(null); // Reset selection
         }
     }, [isOpen, currentFilter]);
+
+    // 合并主属性和扩展属性
+    const allProperties = useMemo(() => {
+        const mainProps = currentSchema ? currentSchema.properties.map(p => ({
+            ...p,
+            isExpand: false,
+            displayName: p.name
+        })) : [];
+        
+        const extraProps = expandedProperties.map(p => ({
+            ...p,
+            isExpand: true,
+            displayName: p.name // expandedProperties 里 name 已经是 path/name 格式
+        }));
+
+        return [...mainProps, ...extraProps];
+    }, [currentSchema, expandedProperties]);
 
     // Helper to insert text at cursor position
     const insertText = (text: string, isWrapper = false) => {
@@ -94,7 +114,6 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
         let newCursorPos = 0;
 
         if (isWrapper && text === '(') {
-            // Special handling for wrapper like parentheses around selection
             const selectedText = currentVal.substring(start, end);
             newVal = currentVal.substring(0, start) + `(${selectedText})` + currentVal.substring(end);
             newCursorPos = start + 1 + selectedText.length + 1;
@@ -105,13 +124,24 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
 
         setExpression(newVal);
 
-        // Need to set selection after render
         requestAnimationFrame(() => {
             if (textareaRef.current) {
                 textareaRef.current.focus();
                 textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
             }
         });
+    };
+
+    // 处理函数点击：如果选中了字段，替换函数中的 Field 占位符
+    const handleInsertFunction = (fnValue: string) => {
+        if (selectedField) {
+            // 替换 'Field' 或 'Field1' 为选中字段
+            // 正则匹配单词边界，避免替换部分单词
+            const replaced = fnValue.replace(/\b(Field|Field1)\b/g, selectedField);
+            insertText(replaced);
+        } else {
+            insertText(fnValue);
+        }
     };
 
     const handleApply = () => {
@@ -138,7 +168,7 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                 过滤器构建器 ($filter Builder)
                             </span>
                             <span className="text-tiny text-default-400 font-normal">
-                                通过点击下方元素构建 OData 筛选条件。支持手动编辑。
+                                选中左侧属性，点击右侧函数可自动填充字段。双击属性可直接插入。
                             </span>
                         </ModalHeader>
                         
@@ -149,20 +179,35 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                     实体属性 (Fields)
                                 </div>
                                 <ScrollShadow className="flex-1 p-2">
-                                    {currentSchema ? (
+                                    {allProperties.length > 0 ? (
                                         <div className="flex flex-col gap-1">
-                                            {currentSchema.properties.map((prop) => (
-                                                <div 
-                                                    key={prop.name}
-                                                    className="group flex flex-col p-2 rounded-md hover:bg-primary/10 cursor-pointer transition-colors border border-transparent hover:border-primary/20"
-                                                    onClick={() => insertText(prop.name)}
-                                                >
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-sm font-medium text-foreground">{prop.name}</span>
-                                                        <span className="text-[10px] text-primary font-mono bg-primary/10 px-1 rounded">{prop.type.split('.').pop()}</span>
+                                            {allProperties.map((prop) => {
+                                                const isSelected = selectedField === prop.displayName;
+                                                return (
+                                                    <div 
+                                                        key={prop.displayName}
+                                                        className={`
+                                                            group flex flex-col p-2 rounded-md cursor-pointer transition-all border
+                                                            ${isSelected 
+                                                                ? 'bg-primary text-primary-foreground border-primary shadow-sm' 
+                                                                : 'bg-transparent hover:bg-default-100 border-transparent text-foreground'
+                                                            }
+                                                        `}
+                                                        onClick={() => setSelectedField(prop.displayName)}
+                                                        onDoubleClick={() => insertText(prop.displayName)}
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-1 overflow-hidden">
+                                                                {prop.isExpand && <Link2 size={10} className={isSelected ? "text-primary-foreground/70" : "text-secondary"} />}
+                                                                <span className="text-sm font-medium truncate" title={prop.displayName}>{prop.displayName}</span>
+                                                            </div>
+                                                            <span className={`text-[10px] font-mono px-1 rounded ${isSelected ? 'bg-white/20' : 'bg-default-100 text-default-400'}`}>
+                                                                {prop.type.split('.').pop()}
+                                                            </span>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     ) : (
                                         <div className="p-4 text-center text-default-400 text-sm">无可用属性</div>
@@ -250,11 +295,16 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                                 {FUNCTIONS.string.map((fn, idx) => (
                                                     <Tooltip key={idx} content={fn.desc || fn.value} delay={1000}>
                                                         <Button 
-                                                            size="sm" variant="bordered" className="h-auto py-2 flex flex-col items-start gap-1"
-                                                            onPress={() => insertText(fn.value)}
+                                                            size="sm" variant="bordered" className="h-auto py-2 flex flex-col items-start gap-1 group hover:border-primary/50"
+                                                            onPress={() => handleInsertFunction(fn.value)}
                                                         >
-                                                            <span className="font-bold text-xs">{fn.label}</span>
-                                                            <span className="text-[10px] text-default-400 font-mono truncate w-full text-left">{fn.value}</span>
+                                                            <span className="font-bold text-xs group-hover:text-primary transition-colors">{fn.label}</span>
+                                                            <span className="text-[10px] text-default-400 font-mono truncate w-full text-left">
+                                                                {selectedField 
+                                                                    ? fn.value.replace(/\b(Field|Field1)\b/g, selectedField) 
+                                                                    : fn.value
+                                                                }
+                                                            </span>
                                                         </Button>
                                                     </Tooltip>
                                                 ))}
@@ -264,11 +314,16 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                             <ScrollShadow className="h-full p-2 grid grid-cols-2 gap-2 content-start">
                                                 {FUNCTIONS.date.map((fn, idx) => (
                                                     <Button 
-                                                        key={idx} size="sm" variant="bordered" className="h-auto py-2 flex flex-col items-start gap-1"
-                                                        onPress={() => insertText(fn.value)}
+                                                        key={idx} size="sm" variant="bordered" className="h-auto py-2 flex flex-col items-start gap-1 group hover:border-primary/50"
+                                                        onPress={() => handleInsertFunction(fn.value)}
                                                     >
-                                                        <span className="font-bold text-xs">{fn.label}</span>
-                                                        <span className="text-[10px] text-default-400 font-mono">{fn.value}</span>
+                                                        <span className="font-bold text-xs group-hover:text-primary transition-colors">{fn.label}</span>
+                                                        <span className="text-[10px] text-default-400 font-mono">
+                                                             {selectedField 
+                                                                ? fn.value.replace(/\b(Field|Field1)\b/g, selectedField) 
+                                                                : fn.value
+                                                             }
+                                                        </span>
                                                     </Button>
                                                 ))}
                                             </ScrollShadow>
@@ -277,11 +332,16 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                             <ScrollShadow className="h-full p-2 grid grid-cols-2 gap-2 content-start">
                                                 {FUNCTIONS.math.map((fn, idx) => (
                                                     <Button 
-                                                        key={idx} size="sm" variant="bordered" className="h-auto py-2 flex flex-col items-start gap-1"
-                                                        onPress={() => insertText(fn.value)}
+                                                        key={idx} size="sm" variant="bordered" className="h-auto py-2 flex flex-col items-start gap-1 group hover:border-primary/50"
+                                                        onPress={() => handleInsertFunction(fn.value)}
                                                     >
-                                                        <span className="font-bold text-xs">{fn.label}</span>
-                                                        <span className="text-[10px] text-default-400 font-mono">{fn.value}</span>
+                                                        <span className="font-bold text-xs group-hover:text-primary transition-colors">{fn.label}</span>
+                                                        <span className="text-[10px] text-default-400 font-mono">
+                                                             {selectedField 
+                                                                ? fn.value.replace(/\b(Field|Field1)\b/g, selectedField) 
+                                                                : fn.value
+                                                             }
+                                                        </span>
                                                     </Button>
                                                 ))}
                                             </ScrollShadow>

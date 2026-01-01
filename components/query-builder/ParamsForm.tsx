@@ -108,6 +108,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                 currentFilter={filter}
                 onApply={setFilter}
                 currentSchema={currentSchema}
+                expandedProperties={expandedEntityProperties} // 传递扩展属性
             />
 
             {/* --- 左侧控制面板 (实体, 过滤, 分页) [col-span-3] --- */}
