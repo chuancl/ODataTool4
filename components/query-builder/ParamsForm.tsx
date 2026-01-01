@@ -145,46 +145,65 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         setSelect(Array.from(new Set(finalSelection)).join(','));
     };
 
-    // --- Expand 字段逻辑 ---
+    // --- Expand 字段逻辑 (动态递归生成) ---
     const expandItems = useMemo(() => {
         if (!currentSchema || !schema) return [];
-        if (currentSchema.navigationProperties.length === 0) {
-            return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined, level: 0 }];
-        }
+        
+        // 获取当前已选中的 keys 集合
+        const selectedSet = new Set(expand ? expand.split(',') : []);
 
-        const buildPaths = (entityName: string, parentPath: string, currentDepth: number): any[] => {
-            if (currentDepth >= 5) return []; // Increased depth limit to 5
-            const entity = schema.entities.find(e => e.name === entityName);
-            if (!entity) return [];
+        const buildRecursive = (entity: EntityType, parentPath: string, level: number): any[] => {
+            const navs = entity.navigationProperties;
+            if (!navs || navs.length === 0) return [];
+            
+            let result: any[] = [];
+            // 排序，保证显示顺序稳定
+            const sortedNavs = [...navs].sort((a, b) => a.name.localeCompare(b.name));
 
-            let results: any[] = [];
-            for (const nav of entity.navigationProperties) {
+            for (const nav of sortedNavs) {
                 const currentPath = parentPath ? `${parentPath}/${nav.name}` : nav.name;
-                results.push({
+                
+                // 添加当前层级的节点
+                result.push({
                     name: currentPath,
                     label: nav.name,
                     fullPath: currentPath,
                     type: 'nav',
                     targetType: nav.targetType,
-                    level: currentDepth
+                    level: level
                 });
 
-                let targetTypeName = nav.targetType;
-                if (targetTypeName) {
-                    if (targetTypeName.startsWith('Collection(')) {
+                // 核心逻辑：只有当父级节点被选中时，才递归生成子级节点
+                // 这样实现了 "点击展开下级" 的效果
+                if (selectedSet.has(currentPath)) {
+                     // 解析 Target Entity
+                     let targetTypeName = nav.targetType;
+                     if (targetTypeName?.startsWith('Collection(')) {
                         targetTypeName = targetTypeName.slice(11, -1);
-                    }
-                    targetTypeName = targetTypeName.split('.').pop() || "";
-                    if (targetTypeName) {
-                        const children = buildPaths(targetTypeName, currentPath, currentDepth + 1);
-                        results = results.concat(children);
-                    }
+                     }
+                     targetTypeName = targetTypeName?.split('.').pop() || "";
+                     
+                     const nextEntity = schema.entities.find(e => e.name === targetTypeName);
+                     if (nextEntity) {
+                         // 递归查找，设置最大深度防止死循环（虽然有 select 限制，加个保险）
+                         if (level < 10) { 
+                             const children = buildRecursive(nextEntity, currentPath, level + 1);
+                             result.push(...children);
+                         }
+                     }
                 }
             }
-            return results;
+            return result;
         };
-        return buildPaths(currentSchema.name, "", 0);
-    }, [currentSchema, schema]);
+
+        const items = buildRecursive(currentSchema, "", 0);
+
+        if (items.length === 0) {
+            return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined, level: 0 }];
+        }
+
+        return items;
+    }, [currentSchema, schema, expand]);
 
     const currentExpandKeys = useMemo(() => {
         return new Set(expand ? expand.split(',') : []);
