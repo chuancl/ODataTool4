@@ -42,10 +42,10 @@ const App: React.FC = () => {
     const pagePath = 'dashboard.html';
     
     if (targetUrl) {
-      const dashboardUrl = chrome.runtime.getURL(`${pagePath}#url=${encodeURIComponent(targetUrl)}`);
+      const dashboardUrl = browser.runtime.getURL(`${pagePath}#url=${encodeURIComponent(targetUrl)}`);
       browser.tabs.create({ url: dashboardUrl });
     } else {
-      const dashboardUrl = chrome.runtime.getURL(pagePath);
+      const dashboardUrl = browser.runtime.getURL(pagePath);
       browser.tabs.create({ url: dashboardUrl });
     }
   };

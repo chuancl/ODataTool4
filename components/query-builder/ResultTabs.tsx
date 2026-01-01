@@ -50,6 +50,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         
         const observer = new ResizeObserver(entries => {
             for (const entry of entries) {
+                // 使用 contentRect.width 获取容器内容宽度（不含滚动条）
                 setContainerWidth(entry.contentRect.width);
             }
         });
@@ -65,53 +66,75 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     const columns = useMemo(() => {
         if (queryResult.length === 0) return [];
         
-        const rawKeys = Object.keys(queryResult[0]).filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata');
+        // 过滤掉元数据，保留所有数据字段（包括 null 值，避免之前因第一行是 null 而丢列的问题）
+        const rawKeys = Object.keys(queryResult[0]).filter(key => key !== '__metadata');
         if (rawKeys.length === 0) return [];
 
         // 1. 计算每一列的“内容基准宽度”
-        // 采样前 20 行数据
-        const sampleData = queryResult.slice(0, 20);
-        const columnBaseWidths: Record<string, number> = {};
+        // 采样前 50 行数据，获取更准确的长度分布
+        const sampleData = queryResult.slice(0, 50);
+        const columnMeta: Record<string, { baseWidth: number }> = {};
+        let totalBaseWidth = 0;
         
         rawKeys.forEach(key => {
-            // 表头长度
-            let maxCharLength = key.length; 
+            // 表头权重 (表头通常有加粗、排序图标等，给予 1.3 倍字符权重)
+            let maxWeightedLen = key.length * 1.3; 
             
-            // 采样数据长度
             sampleData.forEach(row => {
                 const val = row[key];
                 if (val !== null && val !== undefined) {
                     const str = String(val);
-                    // 简单的视觉长度估算：中文当2个字符
-                    const len = str.length + (str.match(/[^\x00-\xff]/g) || []).length; 
-                    if (len > maxCharLength) maxCharLength = len;
+                    
+                    // 字符宽度估算: 
+                    // ASCII 字符 = 1
+                    // 宽字符 (中文/全角等) = 1.6
+                    let len = 0;
+                    for (let i = 0; i < str.length; i++) {
+                        len += (str.charCodeAt(i) > 255) ? 1.6 : 1;
+                    }
+
+                    // 长度权重衰减算法 (Logarithmic-like scaling):
+                    // "本身内容占同行内高，那相对最小列宽也更大"
+                    // - 短文本 (<=30): 100% 权重，直接反映长度
+                    // - 中长文本 (30-80): 50% 权重，增长变缓
+                    // - 超长文本 (>80): 20% 权重，避免极长文本把列撑得过大
+                    let weightedLen = len;
+                    if (len > 30) {
+                        weightedLen = 30 + (len - 30) * 0.5;
+                    }
+                    if (weightedLen > 80) { // 此时 weightedLen 其实对应原始长度 130 左右
+                        weightedLen = 80 + (weightedLen - 80) * 0.2;
+                    }
+
+                    // 最终限制一个单列采样的最大权重值，防止异常数据
+                    if (weightedLen > 250) weightedLen = 250;
+
+                    if (weightedLen > maxWeightedLen) maxWeightedLen = weightedLen;
                 }
             });
 
             // 估算像素宽度: 
-            // 基础Padding(24) + 字符数 * 字符平均宽度(约8px)
-            // 限制：最小 80px, 最大 400px (防止某一列内容过长撑爆屏幕)
-            const estimatedWidth = Math.min(Math.max(maxCharLength * 8 + 24, 80), 400);
-            columnBaseWidths[key] = estimatedWidth;
+            // 字符权重 * 8px (字体大小) + Padding/Icons (32px)
+            // 限制：最小 80px (防止列太窄无法操作), 最大 500px (作为基准，若屏幕够宽后续会被拉伸)
+            const basePx = Math.min(Math.max(Math.ceil(maxWeightedLen * 8) + 32, 80), 500);
+            
+            columnMeta[key] = { baseWidth: basePx };
+            totalBaseWidth += basePx;
         });
 
-        // 2. 计算总基准宽度
-        const totalBaseWidth = rawKeys.reduce((sum, key) => sum + columnBaseWidths[key], 0);
-
-        // 3. 决定是否铺满屏幕
-        // 如果容器有宽度，且总基准宽度小于容器宽度，则按比例放大各列以铺满屏幕
-        let scaleFactor = 1;
-        if (containerWidth > 0 && totalBaseWidth < containerWidth) {
-             // 减去一些滚动条预留空间 (20px)
-             scaleFactor = (containerWidth - 20) / totalBaseWidth;
-        }
+        // 2. 决定是否铺满屏幕 (Responsive Fill)
+        // 减去一些滚动条预留空间 (16px)
+        const availableWidth = containerWidth > 0 ? containerWidth - 16 : 0;
+        
+        // 核心逻辑：如果 "总基准宽度" < "屏幕可用宽度"，则按比例拉伸所有列
+        // 否则，保持基准宽度，允许横向滚动
+        const shouldScale = availableWidth > 0 && totalBaseWidth < availableWidth;
+        const scaleRatio = shouldScale ? (availableWidth / totalBaseWidth) : 1;
 
         // 4. 生成最终列定义
         return rawKeys.map(key => {
             // 计算最终宽度
-            let finalWidth = Math.floor(columnBaseWidths[key] * scaleFactor);
-            // 即使是放大，也稍微限制一下最大值（比如不建议超过 800px），除非只有一两列
-            if (rawKeys.length > 2 && finalWidth > 600) finalWidth = 600;
+            const finalWidth = Math.floor(columnMeta[key].baseWidth * scaleRatio);
 
             return columnHelper.accessor(key, { 
                 id: key,
@@ -122,7 +145,8 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                 size: finalWidth,
                 // 允许调整的最小宽度
                 minSize: 60,
-                maxSize: 1000,
+                // 允许的最大宽度设大一点，方便用户手动拖拽
+                maxSize: 5000,
             });
         });
     }, [queryResult, containerWidth]); // 依赖 containerWidth 以便在窗口 resize 时重新计算填充
@@ -132,7 +156,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
         }
-    }, [columns.length]); // 仅当列数量变化时重置顺序，避免 resize 导致重置
+    }, [columns.length]); 
 
     const table = useReactTable({
         data: queryResult,
@@ -183,7 +207,10 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                         </div>
 
                         <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
-                            {/* 使用 table-fixed 配合列宽调整 */}
+                            {/* 
+                                使用 table-fixed 配合列宽调整 
+                                width 设置为 totalSize，当被拉伸时 totalSize ~= containerWidth，当未拉伸时 totalSize > containerWidth (出现滚动条)
+                            */}
                             <table 
                                 className="w-full text-left border-collapse table-fixed"
                                 style={{ width: table.getTotalSize() }}
