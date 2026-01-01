@@ -132,41 +132,69 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
         fetch(generatedUrl, { headers: { 'Accept': 'application/xml, application/atom+xml' } })
       ]);
 
-      if (jsonRes.status === 'fulfilled' && jsonRes.value.ok) {
-        const text = await jsonRes.value.text();
-        try {
-          const data = JSON.parse(text);
-          const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
-          setQueryResult(results);
-          setRawJsonResult(JSON.stringify(data, null, 2));
-        } catch (e) {
-          setRawJsonResult(`// JSON 解析失败: \n${text}`);
+      // --- JSON 处理 ---
+      if (jsonRes.status === 'fulfilled') {
+        const response = jsonRes.value;
+        const text = await response.text();
+
+        if (response.ok) {
+          try {
+            const data = JSON.parse(text);
+            const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
+            setQueryResult(results);
+            setRawJsonResult(JSON.stringify(data, null, 2));
+          } catch (e) {
+            setRawJsonResult(`// JSON 解析失败: \n${text}`);
+          }
+        } else {
+          // HTTP Error: 尝试美化错误信息
+          let errorBody = text;
+          try {
+            const jsonError = JSON.parse(text);
+            errorBody = JSON.stringify(jsonError, null, 2);
+          } catch (e) {
+            // keep raw text if not json
+          }
+          setRawJsonResult(`// HTTP Error: ${response.status} ${response.statusText}\n// 详细信息 (Details):\n${errorBody}`);
         }
       } else {
-        const errorMsg = jsonRes.status === 'fulfilled' 
-          ? `// HTTP 错误: ${jsonRes.value.status} ${jsonRes.value.statusText}` 
-          : `// 请求失败: ${jsonRes.reason}`;
-        setRawJsonResult(errorMsg);
+        // Network Error
+        setRawJsonResult(`// 请求失败 (Network Error): ${jsonRes.reason}`);
       }
 
-      if (xmlRes.status === 'fulfilled' && xmlRes.value.ok) {
-        const text = await xmlRes.value.text();
-        try {
-            const formatted = xmlFormat(text, { 
-                indentation: '  ', 
-                filter: (node) => node.type !== 'Comment', 
-                collapseContent: true, 
-                lineSeparator: '\n' 
-            });
-            setRawXmlResult(formatted);
-        } catch (err) {
-            setRawXmlResult(text);
+      // --- XML 处理 ---
+      if (xmlRes.status === 'fulfilled') {
+        const response = xmlRes.value;
+        const text = await response.text();
+
+        if (response.ok) {
+            try {
+                const formatted = xmlFormat(text, { 
+                    indentation: '  ', 
+                    filter: (node) => node.type !== 'Comment', 
+                    collapseContent: true, 
+                    lineSeparator: '\n' 
+                });
+                setRawXmlResult(formatted);
+            } catch (err) {
+                setRawXmlResult(text);
+            }
+        } else {
+            // HTTP Error: 尝试美化 XML 错误信息
+            let errorBody = text;
+            try {
+                errorBody = xmlFormat(text, { 
+                    indentation: '  ', 
+                    filter: (node) => node.type !== 'Comment', 
+                    collapseContent: true, 
+                    lineSeparator: '\n' 
+                });
+            } catch(e) {}
+            
+            setRawXmlResult(`<!-- HTTP Error: ${response.status} ${response.statusText} -->\n<!-- 详细信息 (Details): -->\n${errorBody}`);
         }
       } else {
-        const errorMsg = xmlRes.status === 'fulfilled'
-          ? `<!-- HTTP 错误: ${xmlRes.value.status} (该服务可能不支持 XML 格式) -->`
-          : `<!-- 请求失败: ${xmlRes.reason} -->`;
-        setRawXmlResult(errorMsg);
+        setRawXmlResult(`<!-- 请求失败 (Network Error): ${xmlRes.reason} -->`);
       }
 
     } catch (e: any) {
