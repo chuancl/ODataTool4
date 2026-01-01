@@ -207,7 +207,6 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
             newVal = currentVal.substring(0, start) + text + currentVal.substring(end);
             
             // Auto-select placeholder logic (Smart Selection)
-            // Example: startswith(Name, 'value') -> matches 'value'
             const quoteMatch = /'([^']+)'/.exec(text);
             if (quoteMatch) {
                 // quoteMatch[0] is 'value' (with quotes)
@@ -281,10 +280,11 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                             <div className="p-2 text-xs font-bold text-default-500 bg-default-50 border-b border-divider uppercase tracking-wider shrink-0">
                                 实体属性 (Fields)
                             </div>
-                            {/* ScrollShadow with full height to enable scrolling */}
-                            <ScrollShadow className="flex-1 p-2 w-full">
+                            {/* Standard div with overflow-auto for 2D scrolling (Vertical + Horizontal) */}
+                            <div className="flex-1 p-2 w-full overflow-auto scrollbar-thin">
                                 {allProperties.length > 0 ? (
-                                    <div className="flex flex-col gap-1 pb-2">
+                                    /* min-w-full ensures it spans at least 100%, w-max ensures it grows with content */
+                                    <div className="flex flex-col gap-1 pb-2 min-w-full w-max">
                                         {allProperties.map((prop) => {
                                             const isSelected = selectedField === prop.displayName;
                                             return (
@@ -300,14 +300,10 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                                     onClick={() => setSelectedField(prop.displayName)}
                                                     onDoubleClick={() => insertText(prop.displayName)}
                                                 >
-                                                    <div className="flex items-center justify-between gap-2 overflow-hidden w-full">
-                                                        {/* Horizontal Scroll for long names */}
-                                                        {/* min-w-0 is key for flex child scrolling. Added thin scrollbar style. */}
-                                                        <div 
-                                                            className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0 pb-0.5" 
-                                                            style={{ scrollbarWidth: 'thin' }}
-                                                        >
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="flex items-center gap-1">
                                                             {prop.isExpand && <Link2 size={10} className={`shrink-0 ${isSelected ? "text-primary-foreground/70" : "text-secondary"}`} />}
+                                                            {/* whitespace-nowrap triggers horizontal scroll on parent */}
                                                             <span className="text-sm font-medium whitespace-nowrap" title={prop.displayName}>{prop.displayName}</span>
                                                         </div>
                                                         <span className={`text-[10px] font-mono px-1 rounded shrink-0 ${isSelected ? 'bg-white/20' : 'bg-default-100 text-default-400'}`}>
@@ -321,7 +317,7 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                 ) : (
                                     <div className="p-4 text-center text-default-400 text-sm">无可用属性</div>
                                 )}
-                            </ScrollShadow>
+                            </div>
                         </div>
 
                         {/* Middle Column: Operators */}
