@@ -299,16 +299,24 @@ export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
 };
 
 // 4. C# Code Generator
-export const generateCSharpDeleteCode = (entitySet: string, keyPredicates: string[], baseUrl: string) => {
+export const generateCSharpDeleteCode = (entitySet: string, keyPredicates: string[], baseUrl: string, version: ODataVersion) => {
     const cleanUrl = baseUrl.replace(/\/$/, '');
-    let sb = `// C# HttpClient Example for deleting from ${entitySet}\n`;
+    let sb = `// C# HttpClient Example for deleting from ${entitySet} (${version})\n`;
     sb += `using System;\nusing System.Net.Http;\nusing System.Threading.Tasks;\n\n`;
     sb += `public async Task DeleteItemsAsync()\n{\n`;
     sb += `    using (var client = new HttpClient())\n    {\n`;
-    sb += `        client.BaseAddress = new Uri("${cleanUrl}/");\n\n`;
+    sb += `        client.BaseAddress = new Uri("${cleanUrl}/");\n`;
+    
+    if (version === 'V4') {
+        sb += `        client.DefaultRequestHeaders.Add("OData-Version", "4.0");\n`;
+        sb += `        client.DefaultRequestHeaders.Add("OData-MaxVersion", "4.0");\n`;
+    } else {
+        sb += `        client.DefaultRequestHeaders.Add("DataServiceVersion", "2.0");\n`;
+        sb += `        client.DefaultRequestHeaders.Add("MaxDataServiceVersion", "2.0");\n`;
+    }
+    sb += `\n`;
     
     keyPredicates.forEach(pred => {
-        // 去除可能的开头括号以便美观，但 predicates 通常是 (ID=1)
         sb += `        // DELETE ${entitySet}${pred}\n`;
         sb += `        var response = await client.DeleteAsync("${entitySet}${pred}");\n`;
         sb += `        response.EnsureSuccessStatusCode();\n`;
@@ -319,21 +327,57 @@ export const generateCSharpDeleteCode = (entitySet: string, keyPredicates: strin
 };
 
 // 5. Java Olingo Code Generator
-export const generateJavaDeleteCode = (entitySet: string, keyPredicates: string[]) => {
-    let sb = `// Java Olingo V4 Example for deleting from ${entitySet}\n`;
-    sb += `// Assuming 'client' is an initialized ODataClient and 'serviceRoot' is set\n\n`;
-    
-    keyPredicates.forEach(pred => {
-        // pred format: (Key=Value) or (1)
-        // Olingo URI Builder usually takes the key value directly or a map
-        sb += `// DELETE ${entitySet}${pred}\n`;
-        sb += `URI uri = client.newURIBuilder(serviceRoot)\n`;
-        sb += `    .appendEntitySetSegment("${entitySet}")\n`;
-        // 简单处理：提示用户将 predicate 填入
-        sb += `    .appendKeySegment(${pred}) // Adjust key format as needed\n`;
-        sb += `    .build();\n`;
-        sb += `ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
-        sb += `ODataResponse response = request.execute();\n\n`;
-    });
-    return sb;
+export const generateJavaDeleteCode = (entitySet: string, keyPredicates: string[], version: ODataVersion, baseUrl: string) => {
+    if (version === 'V4') {
+        let sb = `// Java Olingo V4 Example for deleting from ${entitySet}\n`;
+        sb += `import org.apache.olingo.client.api.ODataClient;\n`;
+        sb += `import org.apache.olingo.client.core.ODataClientFactory;\n`;
+        sb += `import org.apache.olingo.client.api.communication.request.cud.ODataDeleteRequest;\n`;
+        sb += `import org.apache.olingo.client.api.communication.response.ODataDeleteResponse;\n\n`;
+        sb += `// Assuming 'serviceRoot' is set to "${baseUrl}"\n`;
+        sb += `ODataClient client = ODataClientFactory.getClient();\n\n`;
+        
+        keyPredicates.forEach(pred => {
+            sb += `URI uri = client.newURIBuilder(serviceRoot)\n`;
+            sb += `    .appendEntitySetSegment("${entitySet}")\n`;
+            
+            // 简单处理 predicate，移除外层括号
+            const keyVal = pred.replace(/^\(/, '').replace(/\)$/, '');
+            // 如果包含等号，通常是 (Key=Value)，需要更复杂的解析，这里简化输出
+            if (keyVal.includes('=')) {
+                 sb += `    .appendKeySegment(${pred}) // Adjust based on key type\n`;
+            } else {
+                 sb += `    .appendKeySegment(${keyVal})\n`;
+            }
+
+            sb += `    .build();\n`;
+            sb += `ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
+            sb += `ODataDeleteResponse response = request.execute();\n`;
+            sb += `if (response.getStatusCode() == 204) { System.out.println("Deleted"); }\n\n`;
+        });
+        return sb;
+    } else {
+        // V2/V3 - Use standard Java 11 HttpClient
+        let sb = `// Java 11 HttpClient Example for deleting from ${entitySet} (${version})\n`;
+        sb += `// Note: Olingo V2 Client API is different and verbose. Standard HTTP is often easier.\n`;
+        sb += `import java.net.URI;\n`;
+        sb += `import java.net.http.HttpClient;\n`;
+        sb += `import java.net.http.HttpRequest;\n`;
+        sb += `import java.net.http.HttpResponse;\n\n`;
+        
+        sb += `HttpClient client = HttpClient.newHttpClient();\n\n`;
+
+        keyPredicates.forEach(pred => {
+            // 注意：V2 往往需要完整的 URL
+            const url = `${baseUrl.replace(/\/$/, '')}/${entitySet}${pred}`;
+            sb += `HttpRequest request = HttpRequest.newBuilder()\n`;
+            sb += `    .uri(URI.create("${url}"))\n`;
+            sb += `    .header("DataServiceVersion", "2.0")\n`;
+            sb += `    .DELETE()\n`;
+            sb += `    .build();\n`;
+            sb += `HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());\n`;
+            sb += `System.out.println("Status: " + response.statusCode());\n\n`;
+        });
+        return sb;
+    }
 };

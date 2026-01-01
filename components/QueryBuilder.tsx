@@ -286,11 +286,11 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     // 2. SAPUI5 Code
     const codeSap = generateSAPUI5Code('delete', selectedEntity, { keyPredicates: predicates }, version);
 
-    // 3. C# Code
-    const codeCSharp = generateCSharpDeleteCode(selectedEntity, predicates, baseUrl);
+    // 3. C# Code (Pass version)
+    const codeCSharp = generateCSharpDeleteCode(selectedEntity, predicates, baseUrl, version);
 
-    // 4. Java Code
-    const codeJava = generateJavaDeleteCode(selectedEntity, predicates);
+    // 4. Java Code (Pass version & baseUrl)
+    const codeJava = generateJavaDeleteCode(selectedEntity, predicates, version, baseUrl);
 
     // 传递多语言代码对象给 Modal
     setCodePreview({
