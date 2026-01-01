@@ -47,9 +47,8 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
             onOpenChange={onOpenChange} 
             size="4xl" 
             scrollBehavior="inside"
-            // 确保 Modal 关闭时销毁内容，避免残留
-            shouldBlockScroll={true} 
             isDismissable={false}
+            // Remove manual shouldBlockScroll to rely on NextUI default handling which avoids cleanup race conditions
         >
             <ModalContent>
                 {(onClose) => (
@@ -82,8 +81,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                             ) : (
                                 <div className="flex flex-col h-[500px]">
                                     {/* 
-                                      Refactor: Use Tabs purely as navigation controller. 
-                                      Don't put CodeMirror inside Tabs children to avoid unmounting/mounting issues during animation/switching.
+                                      Tabs Controller
                                     */}
                                     <div className="bg-[#252526] border-b border-white/10 px-4 shrink-0">
                                         <Tabs 
@@ -138,11 +136,17 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                         </Tabs>
                                     </div>
 
-                                    <div className="flex-1 overflow-hidden p-0 relative">
+                                    <div className="flex-1 overflow-hidden relative">
+                                        {/* 
+                                          Use key={selectedTab} to force a full remount of CodeMirror when switching tabs.
+                                          This prevents internal state issues in CodeMirror when content/language changes rapidly inside a Modal,
+                                          which can lead to errors that block the Modal cleanup process.
+                                        */}
                                         <CodeMirror
+                                            key={String(selectedTab)}
                                             value={currentCodeText}
                                             height="100%"
-                                            className="h-full absolute inset-0" 
+                                            className="h-full absolute inset-0"
                                             extensions={[json()]}
                                             theme={vscodeDark}
                                             readOnly={true}
