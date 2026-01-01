@@ -444,7 +444,11 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                             <Button variant="light" onPress={onClose}>
                                 取消
                             </Button>
-                            <Button color="primary" onPress={() => onApply(expression)} startContent={<Check size={16} />}>
+                            <Button 
+                                color="primary" 
+                                onPress={() => { onApply(expression); onClose(); }} 
+                                startContent={<Check size={16} />}
+                            >
                                 应用过滤
                             </Button>
                         </div>
