@@ -207,14 +207,14 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
             newVal = currentVal.substring(0, start) + text + currentVal.substring(end);
             
             // Auto-select placeholder logic (Smart Selection)
+            // Example: startswith(Name, 'value') -> matches 'value'
             const quoteMatch = /'([^']+)'/.exec(text);
             if (quoteMatch) {
                 // quoteMatch[0] is 'value' (with quotes)
-                // We want to select only the inside: value
                 const matchIndex = text.indexOf(quoteMatch[0]); 
-                // Start after first quote
+                // Start after first quote: matchIndex + 1
                 newCursorStart = start + matchIndex + 1; 
-                // End before last quote
+                // End before last quote: matchIndex + length - 1
                 newCursorEnd = start + matchIndex + quoteMatch[0].length - 1;
             } else {
                 newCursorStart = start + text.length;
@@ -300,9 +300,13 @@ export const FilterBuilderModal: React.FC<FilterBuilderModalProps> = ({
                                                     onClick={() => setSelectedField(prop.displayName)}
                                                     onDoubleClick={() => insertText(prop.displayName)}
                                                 >
-                                                    <div className="flex items-center justify-between gap-2 overflow-hidden">
+                                                    <div className="flex items-center justify-between gap-2 overflow-hidden w-full">
                                                         {/* Horizontal Scroll for long names */}
-                                                        <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1">
+                                                        {/* min-w-0 is key for flex child scrolling. Added thin scrollbar style. */}
+                                                        <div 
+                                                            className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0 pb-0.5" 
+                                                            style={{ scrollbarWidth: 'thin' }}
+                                                        >
                                                             {prop.isExpand && <Link2 size={10} className={`shrink-0 ${isSelected ? "text-primary-foreground/70" : "text-secondary"}`} />}
                                                             <span className="text-sm font-medium whitespace-nowrap" title={prop.displayName}>{prop.displayName}</span>
                                                         </div>
