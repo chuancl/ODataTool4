@@ -42,6 +42,9 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const { isOpen, onOpen, onOpenChange } = useDisclosure(); 
   const [codePreview, setCodePreview] = useState('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
+  
+  // 待删除的数据项缓存
+  const [itemsToDelete, setItemsToDelete] = useState<any[]>([]);
 
   // 1. 初始化：使用传入的 Schema 填充 EntitySets
   useEffect(() => {
@@ -217,11 +220,107 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     alert("SAPUI5 Read 代码已复制!");
   };
 
-  const handleDelete = () => {
-    const code = generateSAPUI5Code('delete', selectedEntity, { key: "(ID=1)" }, version);
-    setCodePreview(code);
+  // 生成单条数据的唯一 Key 谓词字符串 (e.g. "(ID=1)" 或 "(Key1=1,Key2='A')")
+  const getKeyPredicate = (item: any): string | null => {
+      let keys: string[] = [];
+      
+      // 1. 尝试从 Schema 获取 Key 定义
+      if (currentSchema && currentSchema.keys.length > 0) {
+          keys = currentSchema.keys;
+      } 
+      // 2. 尝试常见的 Key 字段名
+      else {
+          const possibleKeys = ['ID', 'Id', 'id', 'Uuid', 'UUID', 'Guid', 'Key'];
+          const found = possibleKeys.find(k => item[k] !== undefined);
+          if (found) keys = [found];
+      }
+
+      if (keys.length === 0) return null;
+
+      if (keys.length === 1) {
+          const k = keys[0];
+          const val = item[k];
+          // 简单判断字符串加引号 (更严谨的需要查 Schema 类型)
+          const formattedVal = typeof val === 'string' ? `'${val}'` : val;
+          // 某些 OData 服务支持简化格式 Entity('123')，但 Entity(ID='123') 更标准
+          return `(${k}=${formattedVal})`;
+      } else {
+          // 复合主键
+          const parts = keys.map(k => {
+              const val = item[k];
+              const formattedVal = typeof val === 'string' ? `'${val}'` : val;
+              return `${k}=${formattedVal}`;
+          });
+          return `(${parts.join(',')})`;
+      }
+  };
+
+  // 点击删除按钮触发（准备阶段）
+  const handleDelete = (selectedItems: any[]) => {
+    if (!selectedItems || selectedItems.length === 0) {
+        alert("请先勾选需要删除的数据 (Please select rows to delete first)");
+        return;
+    }
+
+    setItemsToDelete(selectedItems);
+    
+    // 生成预览信息
+    let previewText = `// 准备删除 ${selectedItems.length} 条数据 (Preparing to delete ${selectedItems.length} items):\n\n`;
+    
+    const baseUrl = url.endsWith('/') ? url : `${url}/`;
+    
+    selectedItems.forEach(item => {
+        const predicate = getKeyPredicate(item);
+        if (predicate) {
+            previewText += `DELETE ${baseUrl}${selectedEntity}${predicate}\n`;
+        } else {
+            previewText += `// SKIP: 无法识别主键 (Cannot identify Primary Key): ${JSON.stringify(item)}\n`;
+        }
+    });
+
+    setCodePreview(previewText);
     setModalAction('delete');
     onOpen();
+  };
+
+  // 确认执行批量删除
+  const executeBatchDelete = async () => {
+      if (itemsToDelete.length === 0) return;
+      
+      setLoading(true);
+      const baseUrl = url.endsWith('/') ? url : `${url}/`;
+      const results: string[] = [];
+      let successCount = 0;
+
+      for (const item of itemsToDelete) {
+          const predicate = getKeyPredicate(item);
+          if (!predicate) {
+              results.push(`SKIP: No Key found for item`);
+              continue;
+          }
+
+          const deleteUrl = `${baseUrl}${selectedEntity}${predicate}`;
+          try {
+              const res = await fetch(deleteUrl, { method: 'DELETE' });
+              if (res.ok) {
+                  results.push(`SUCCESS: ${predicate}`);
+                  successCount++;
+              } else {
+                  results.push(`FAILED (${res.status}): ${predicate} - ${res.statusText}`);
+              }
+          } catch (e: any) {
+              results.push(`ERROR: ${predicate} - ${e.message}`);
+          }
+      }
+
+      // 将执行结果显示在结果面板
+      setRawJsonResult(`// 批量删除结果 (Batch Delete Report):\n// 成功: ${successCount}, 失败: ${itemsToDelete.length - successCount}\n\n${results.join('\n')}`);
+      setRawXmlResult(`<!-- Check JSON Tab for detailed delete report -->`);
+      
+      // 重新加载数据
+      await executeQuery();
+      setLoading(false);
+      setItemsToDelete([]); // 清空缓存
   };
 
   const handleEntityChange = (keys: Selection) => {
@@ -245,6 +344,14 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleModalExecute = () => {
+      if (modalAction === 'delete') {
+          executeBatchDelete();
+      } else {
+          navigator.clipboard.writeText(codePreview);
+      }
   };
 
   return (
@@ -280,7 +387,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           rawXmlResult={rawXmlResult}
           loading={loading}
           isDark={isDark}
-          onDelete={handleDelete}
+          onDelete={handleDelete} // 传递新的处理函数
           onExport={() => {}} 
           downloadFile={downloadFile}
           entityName={selectedEntity}
@@ -292,7 +399,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           onOpenChange={onOpenChange}
           code={codePreview}
           action={modalAction}
-          onCopy={() => navigator.clipboard.writeText(codePreview)}
+          onExecute={handleModalExecute} // 使用通用执行回调
       />
     </div>
   );

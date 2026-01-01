@@ -17,11 +17,11 @@ interface ResultTabsProps {
     rawXmlResult: string;
     loading: boolean;
     isDark: boolean;
-    onDelete: () => void;
+    onDelete: (selectedRows: any[]) => void; // Updated type
     onExport: () => void;
     downloadFile: (content: string, filename: string, type: 'json' | 'xml') => void;
     entityName?: string; 
-    schema: ParsedSchema | null; // 新增
+    schema: ParsedSchema | null;
 }
 
 export const ResultTabs: React.FC<ResultTabsProps> = ({
@@ -65,7 +65,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                         onExport={onExport}
                         loading={loading}
                         entityName={entityName}
-                        schema={schema} // 传递 schema
+                        schema={schema} 
                     />
                 </Tab>
 

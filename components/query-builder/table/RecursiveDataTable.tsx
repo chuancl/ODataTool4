@@ -25,12 +25,12 @@ interface RecursiveDataTableProps {
     data: any[];
     isDark: boolean;
     isRoot?: boolean; // If true, shows global actions like Delete/Export
-    onDelete?: () => void;
+    onDelete?: (selectedRows: any[]) => void; // Changed: Pass selected rows
     onExport?: () => void;
     loading?: boolean;
     parentSelected?: boolean; 
     entityName?: string;
-    schema?: ParsedSchema | null; // 新增: 接收 schema 以识别 PK/FK
+    schema?: ParsedSchema | null;
 }
 
 // 递归更新数据的选中状态
@@ -117,26 +117,20 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         const fkInfoMap = new Map<string, string>(); // fieldName -> targetEntity
 
         if (schema && entityName && schema.entities) {
-            // 1. Resolve Entity Name: entityName might be an EntitySet (plural) or EntityType (singular)
             let entityType = schema.entities.find(e => e.name === entityName);
             if (!entityType) {
-                // Try finding by EntitySet mapping
                 const es = schema.entitySets.find(s => s.name === entityName);
                 if (es) {
                     const typeName = es.entityType.split('.').pop();
                     entityType = schema.entities.find(e => e.name === typeName);
                 }
             }
-            // Fallback: try removing 's' or matching startsWith
             if (!entityType) {
                  entityType = schema.entities.find(e => entityName.startsWith(e.name));
             }
 
             if (entityType) {
-                // PKs
                 entityType.keys.forEach(k => pkSet.add(k));
-
-                // FKs
                 entityType.navigationProperties.forEach(nav => {
                     if (nav.constraints) {
                         nav.constraints.forEach(c => {
@@ -269,8 +263,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         const shouldScale = availableWidthForData > 0 && totalBaseWidth < availableWidthForData;
         const scaleRatio = shouldScale ? (availableWidthForData / totalBaseWidth) : 1;
 
-        let currentTotalWidth = 0;
-
         const dataColumns = rawKeys.map((key, index) => {
             let finalWidth = Math.floor(columnMeta[key] * scaleRatio);
             if (shouldScale && index === rawKeys.length - 1) {
@@ -279,14 +271,12 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             }
             currentTotalWidth += finalWidth;
             
-            // Check for PK/FK
             const isPK = pkSet.has(key);
             const isFK = fkSet.has(key);
             const fkTarget = fkInfoMap.get(key);
 
             return columnHelper.accessor(key, { 
                 id: key,
-                // Custom Header with Icons
                 header: () => (
                     <div className="flex items-center gap-1.5">
                         {isPK && (
@@ -324,6 +314,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
     }, [data, containerWidth, pkSet, fkSet, fkInfoMap]);
 
+    let currentTotalWidth = 0;
+
     useEffect(() => {
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
@@ -355,12 +347,20 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         exportToExcel(data, entityName);
     };
 
+    const handleDeleteClick = () => {
+        // 获取所有被勾选的行（基于 __selected 标记）
+        const selectedRows = data.filter(r => r['__selected'] === true);
+        if (onDelete) {
+            onDelete(selectedRows);
+        }
+    };
+
     return (
         <div className="h-full flex flex-col bg-content1 overflow-hidden">
             {isRoot && (
                 <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-end shrink-0">
                     <div className="flex gap-2">
-                        {onDelete && <Button size="sm" color="danger" variant="light" onPress={onDelete} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
+                        {onDelete && <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
                         <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>导出 Excel</Button>
                     </div>
                 </div>
