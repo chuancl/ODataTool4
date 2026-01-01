@@ -263,6 +263,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         const shouldScale = availableWidthForData > 0 && totalBaseWidth < availableWidthForData;
         const scaleRatio = shouldScale ? (availableWidthForData / totalBaseWidth) : 1;
 
+        let currentTotalWidth = 0; // Fix: Defined inside useMemo
+
         const dataColumns = rawKeys.map((key, index) => {
             let finalWidth = Math.floor(columnMeta[key] * scaleRatio);
             if (shouldScale && index === rawKeys.length - 1) {
@@ -313,8 +315,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
     }, [data, containerWidth, pkSet, fkSet, fkInfoMap]);
-
-    let currentTotalWidth = 0;
 
     useEffect(() => {
         if (columns.length > 0) {
