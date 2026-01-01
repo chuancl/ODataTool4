@@ -1,7 +1,18 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Button, Chip, Tabs, Tab } from "@nextui-org/react";
-import { Table as TableIcon, Trash, Save, Braces, Download, Copy, FileCode } from 'lucide-react';
-import { useReactTable, getCoreRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
+import { 
+    Table as TableIcon, Trash, Save, Braces, Download, Copy, FileCode, 
+    ChevronUp, ChevronDown, GripVertical 
+} from 'lucide-react';
+import { 
+    useReactTable, 
+    getCoreRowModel, 
+    getSortedRowModel,
+    flexRender, 
+    createColumnHelper,
+    SortingState,
+    ColumnOrderState
+} from '@tanstack/react-table';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { xml } from '@codemirror/lang-xml';
@@ -16,7 +27,7 @@ interface ResultTabsProps {
     loading: boolean;
     isDark: boolean;
     onDelete: () => void;
-    onExport: () => void; // Not fully implemented in parent yet, but keeping interface ready
+    onExport: () => void;
     downloadFile: (content: string, filename: string, type: 'json' | 'xml') => void;
 }
 
@@ -26,27 +37,53 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
 }) => {
     const editorTheme = isDark ? vscodeDark : githubLight;
 
+    // --- Table State ---
+    const [sorting, setSorting] = useState<SortingState>([]);
+    const [columnOrder, setColumnOrder] = useState<ColumnOrderState>([]);
+    const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
+
     // --- Table Setup ---
     const columnHelper = createColumnHelper<any>();
+    
+    // 动态生成列定义
     const columns = useMemo(() => {
         if (queryResult.length === 0) return [];
         
-        // Filter out complex objects and metadata for the simple table view
+        // 过滤掉复杂对象和元数据，只显示简单字段
         return Object.keys(queryResult[0])
             .filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata')
             .map(key =>
                 columnHelper.accessor(key, { 
+                    id: key,
                     header: key, 
-                    // Use ContentRenderer for the cell content
-                    cell: info => <ContentRenderer value={info.getValue()} columnName={key} />
+                    // 使用 ContentRenderer 渲染单元格内容
+                    cell: info => <ContentRenderer value={info.getValue()} columnName={key} />,
+                    // 默认最小宽度，防止太窄
+                    minSize: 100,
                 })
             );
     }, [queryResult]);
 
+    // 当列定义变化时（例如新查询返回了不同结构），初始化列顺序
+    useEffect(() => {
+        if (columns.length > 0) {
+            setColumnOrder(columns.map(c => c.id as string));
+        }
+    }, [columns]);
+
     const table = useReactTable({
         data: queryResult,
         columns,
+        state: {
+            sorting,
+            columnOrder,
+        },
+        onSortingChange: setSorting,
+        onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
+        getSortedRowModel: getSortedRowModel(), // 启用客户端排序
+        enableColumnResizing: true,
+        columnResizeMode: 'onChange',
     });
 
     return (
@@ -82,24 +119,99 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                             </div>
                         </div>
 
-                        <div className="overflow-auto flex-1 w-full">
-                            <table className="w-full text-left border-collapse">
-                                <thead className="sticky top-0 z-10">
+                        <div className="overflow-auto flex-1 w-full bg-content1">
+                            {/* 使用 table-fixed 配合列宽调整 */}
+                            <table 
+                                className="w-full text-left border-collapse table-fixed"
+                                style={{ width: table.getTotalSize() }}
+                            >
+                                <thead className="sticky top-0 z-20 bg-default-50/90 backdrop-blur-md shadow-sm border-b border-divider">
                                     {table.getHeaderGroups().map(headerGroup => (
                                         <tr key={headerGroup.id}>
                                             {headerGroup.headers.map(header => (
-                                                <th key={header.id} className="border-b border-divider p-3 text-xs font-semibold bg-content2 whitespace-nowrap text-default-600 shadow-sm">
-                                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                                <th 
+                                                    key={header.id} 
+                                                    className="relative p-2 py-3 text-xs font-bold text-default-600 select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
+                                                    style={{ width: header.getSize() }}
+                                                    // --- 拖拽重排逻辑 ---
+                                                    draggable={!header.isPlaceholder}
+                                                    onDragStart={(e) => {
+                                                        setDraggingColumn(header.column.id);
+                                                        e.dataTransfer.effectAllowed = 'move';
+                                                        // 设置拖拽时的透明度
+                                                        e.currentTarget.style.opacity = '0.5';
+                                                    }}
+                                                    onDragEnd={(e) => {
+                                                        e.currentTarget.style.opacity = '1';
+                                                        setDraggingColumn(null);
+                                                    }}
+                                                    onDragOver={(e) => e.preventDefault()}
+                                                    onDrop={(e) => {
+                                                        e.preventDefault();
+                                                        if (draggingColumn && draggingColumn !== header.column.id) {
+                                                            const newOrder = [...columnOrder];
+                                                            const dragIndex = newOrder.indexOf(draggingColumn);
+                                                            const dropIndex = newOrder.indexOf(header.column.id);
+                                                            if (dragIndex !== -1 && dropIndex !== -1) {
+                                                                // 移动数组元素
+                                                                newOrder.splice(dragIndex, 1);
+                                                                newOrder.splice(dropIndex, 0, draggingColumn);
+                                                                setColumnOrder(newOrder);
+                                                            }
+                                                        }
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-1 w-full overflow-hidden">
+                                                        {/* 拖拽手柄图标 */}
+                                                        <GripVertical 
+                                                            size={12} 
+                                                            className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0" 
+                                                        />
+                                                        
+                                                        {/* 表头文本与排序点击区域 */}
+                                                        <div 
+                                                            className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
+                                                            onClick={header.column.getToggleSortingHandler()}
+                                                        >
+                                                            <span className="truncate" title={header.column.id}>
+                                                                {flexRender(header.column.columnDef.header, header.getContext())}
+                                                            </span>
+                                                            {{
+                                                                asc: <ChevronUp size={12} className="text-primary shrink-0" />,
+                                                                desc: <ChevronDown size={12} className="text-primary shrink-0" />,
+                                                            }[header.column.getIsSorted() as string] ?? null}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* --- 列宽调整手柄 --- */}
+                                                    <div
+                                                        onMouseDown={header.getResizeHandler()}
+                                                        onTouchStart={header.getResizeHandler()}
+                                                        className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 transition-colors z-10 ${
+                                                            header.column.getIsResizing() ? 'bg-primary w-1' : 'bg-transparent'
+                                                        }`}
+                                                    />
                                                 </th>
                                             ))}
                                         </tr>
                                     ))}
                                 </thead>
                                 <tbody>
-                                    {table.getRowModel().rows.map(row => (
-                                        <tr key={row.id} className="hover:bg-content2/50 transition-colors border-b border-divider/50 last:border-0">
+                                    {table.getRowModel().rows.map((row, idx) => (
+                                        <tr 
+                                            key={row.id} 
+                                            className={`
+                                                border-b border-divider/40 last:border-0 transition-colors
+                                                hover:bg-primary/5
+                                                ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/30'}
+                                            `}
+                                        >
                                             {row.getVisibleCells().map(cell => (
-                                                <td key={cell.id} className="p-2 text-sm text-default-700 align-middle">
+                                                <td 
+                                                    key={cell.id} 
+                                                    className="p-2 text-sm text-default-700 align-middle overflow-hidden text-ellipsis border-r border-divider/10 last:border-0"
+                                                    style={{ width: cell.column.getSize() }}
+                                                >
                                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                                 </td>
                                             ))}
@@ -107,6 +219,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                     ))}
                                 </tbody>
                             </table>
+                            
                             {queryResult.length === 0 && !loading && (
                                 <div className="flex flex-col items-center justify-center h-40 text-default-400">
                                     <p>暂无数据</p>
@@ -116,7 +229,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                     </div>
                 </Tab>
 
-                {/* Tab 2: JSON 预览 (CodeMirror) */}
+                {/* Tab 2: JSON 预览  (CodeMirror) */}
                 <Tab
                     key="json"
                     title={
