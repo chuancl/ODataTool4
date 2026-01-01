@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Image, Chip, Link, Button, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
 import { 
     FileImage, FileVideo, FileAudio, FileText, FileArchive, FileCode, 
-    FileDigit, File, Download, Copy, Eye 
+    FileDigit, File, Download, Copy, Eye, Table2, Braces 
 } from 'lucide-react';
 
 interface ContentRendererProps {
@@ -53,9 +53,36 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
     const detected = useMemo(() => {
         if (value === null || value === undefined) return { type: 'empty' };
         
+        // 1. 处理数组 (OData 一对多关系)
+        if (Array.isArray(value)) {
+            // V2: { results: [...] } sometimes unwrapped, but here it's already an array
+            return { type: 'array', count: value.length };
+        }
+
+        // 2. 处理对象 (OData 一对一关系 或 V2 Collection)
+        if (typeof value === 'object') {
+            // 排除 Date 对象 (虽然 OData V2 通常返回字符串，但防守一下)
+            if (value instanceof Date) return { type: 'text', content: value.toISOString() };
+
+            // V2 格式: { results: [...] }
+            if (Array.isArray(value.results)) {
+                 return { type: 'array', count: value.results.length };
+            }
+            // Metadata
+            if (value.__metadata && Object.keys(value).length === 1) {
+                return { type: 'meta' };
+            }
+            // Deferred
+            if (value.__deferred) {
+                return { type: 'deferred' };
+            }
+            
+            return { type: 'object', keys: Object.keys(value).length };
+        }
+
         const strVal = String(value).trim();
 
-        // 0. 判断 Data URI (e.g. data:image/png;base64,...)
+        // 3. 判断 Data URI (e.g. data:image/png;base64,...)
         if (strVal.startsWith('data:')) {
             if (strVal.startsWith('data:image/')) return { type: 'image', src: strVal, mode: 'data_uri' };
             if (strVal.startsWith('data:video/')) return { type: 'video', src: strVal, mode: 'data_uri' };
@@ -63,7 +90,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             return { type: 'file', src: strVal, mode: 'data_uri' };
         }
 
-        // 1. 判断 URL
+        // 4. 判断 URL
         const isUrl = /^(https?:\/\/.+|\/.+\.\w+)$/i.test(strVal);
         if (isUrl) {
             const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
@@ -73,8 +100,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             if (strVal.match(/\.(img|pic|photo)/i)) return { type: 'image', src: strVal, mode: 'url' };
         }
 
-        // 2. 判断 Base64
-        // 放宽正则条件
+        // 5. 判断 Base64
         const isBase64Like = strVal.length > 20 && /^[A-Za-z0-9+/]*={0,2}$/.test(strVal.replace(/\s/g, ''));
         
         if (isBase64Like) {
@@ -90,11 +116,8 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 }
             }
 
-            // B. 特殊处理：OLE Wrapped BMP (常见于 Northwind 等旧 OData 服务)
-            // Access 数据库通常会在图片数据前添加 78 字节的 OLE Header
-            // 78 bytes * 8 bits / 6 bits per char = 104 characters
+            // B. 特殊处理：OLE Wrapped BMP
             if (strVal.length > 104) {
-                // 检查第 104 个字符开始是否是 BMP 魔数 (Base64 'Qk' = 'BM')
                 const oleSlice = strVal.substring(104, 120);
                 if (oleSlice.startsWith('Qk')) {
                     return { 
@@ -107,16 +130,13 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             }
 
             // C. 启发式回退 (基于列名)
-            // 如果没有匹配到魔数，但列名暗示是图片，尝试强制渲染
             if (columnName && /image|photo|picture|icon|logo/i.test(columnName)) {
-                 // 如果列名包含 'picture' (Northwind习惯), 优先尝试 BMP
-                 // 否则默认尝试 PNG
                  const fallbackMime = /picture|bmp/i.test(columnName) ? 'image/bmp' : 'image/png';
                  return { type: 'image', src: `data:${fallbackMime};base64,${strVal}`, mode: 'base64_fallback', mime: fallbackMime };
             }
         }
 
-        // 3. 普通文本
+        // 6. 普通文本
         return { type: 'text', content: strVal };
     }, [value, columnName]);
 
@@ -128,7 +148,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                         src={detected.src} 
                         alt="Preview" 
                         className="max-w-full max-h-[80vh] object-contain"
-                        // 移除 NextUI 的默认加载样式，避免干扰
                         disableSkeleton
                     />
                     <div className="text-tiny text-default-400 font-mono">
@@ -144,10 +163,61 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 </div>
             );
             onOpen();
+        } else if (detected.type === 'array' || detected.type === 'object') {
+            setPreviewContent(
+                <div className="whitespace-pre-wrap break-all font-mono text-xs bg-content2 p-4 rounded max-h-[60vh] overflow-auto">
+                    {JSON.stringify(value, null, 2)}
+                </div>
+            );
+            onOpen();
         }
     };
 
-    if (detected.type === 'empty') return <span className="text-default-300 italic">null</span>;
+    if (detected.type === 'empty') return <span className="text-default-300 italic text-xs">null</span>;
+
+    // --- Complex Types Rendering ---
+
+    if (detected.type === 'array') {
+        return (
+            <Chip 
+                size="sm" 
+                variant="flat" 
+                color="secondary" 
+                startContent={<Table2 size={12}/>}
+                classNames={{ base: "h-5 text-[10px] px-1", content: "font-mono" }}
+                onClick={handlePreview}
+                className="cursor-pointer hover:bg-secondary/20 transition-colors"
+            >
+                {detected.count} Items
+            </Chip>
+        );
+    }
+
+    if (detected.type === 'object') {
+        return (
+             <Chip 
+                size="sm" 
+                variant="flat" 
+                color="primary" 
+                startContent={<Braces size={12}/>}
+                classNames={{ base: "h-5 text-[10px] px-1", content: "font-mono" }}
+                onClick={handlePreview}
+                className="cursor-pointer hover:bg-primary/20 transition-colors"
+            >
+                Details
+            </Chip>
+        );
+    }
+
+    if (detected.type === 'deferred') {
+        return <span className="text-default-300 text-[10px] italic">deferred</span>;
+    }
+    
+    if (detected.type === 'meta') {
+        return <span className="text-default-300 text-[10px] italic">metadata</span>;
+    }
+
+    // --- Media Rendering ---
 
     if (detected.type === 'image') {
         return (
@@ -234,16 +304,12 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         );
     }
 
-    // Default Text: 展示完整文本，配合表格的列宽调整和 CSS 截断
+    // Default Text
     const str = String(value);
-    
-    // 只有当文本真的特别长（例如超过200字符），我们才显示一个“查看更多”的眼睛图标作为辅助
-    // 但核心文本不再截断显示，而是交给 CSS (overflow-hidden + text-ellipsis)
     const showPreviewBtn = str.length > 200;
     
     return (
         <div className="group relative w-full">
-            {/* 使用 truncate 让 CSS 处理显示，不从 JS 截断数据 */}
             <div className="text-sm text-default-700 font-mono truncate w-full" title={str}>
                 {str}
             </div>
