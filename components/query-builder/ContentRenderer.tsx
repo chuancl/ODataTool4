@@ -114,10 +114,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                  const fallbackMime = /picture|bmp/i.test(columnName) ? 'image/bmp' : 'image/png';
                  return { type: 'image', src: `data:${fallbackMime};base64,${strVal}`, mode: 'base64_fallback', mime: fallbackMime };
             }
-
-            // D. 纯二进制数据 (Removed: Description 等长文本容易被误判为二进制)
-            // 只有当明确识别出文件头或列名特征时才渲染为多媒体，否则默认回退到文本
-            // return { type: 'binary', length: strVal.length, content: strVal };
         }
 
         // 3. 普通文本
@@ -141,7 +137,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 </div>
             );
             onOpen();
-        } else if (detected.type === 'text') { // Explicitly check text as binary was removed
+        } else if (detected.type === 'text') { 
             setPreviewContent(
                 <div className="whitespace-pre-wrap break-all font-mono text-xs bg-content2 p-4 rounded max-h-[60vh] overflow-auto">
                     {String(value)}
@@ -211,7 +207,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
 
     if (detected.type === 'file') {
         const Icon = detected.icon || File;
-        // Removed binary label check logic as binary type is deprecated
         const label = `${detected.mime?.split('/')[1]?.toUpperCase() || 'FILE'}`;
 
         return (
@@ -239,21 +234,25 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         );
     }
 
-    // Default Text with truncation
+    // Default Text: 展示完整文本，配合表格的列宽调整和 CSS 截断
     const str = String(value);
-    const isLong = str.length > 50;
+    
+    // 只有当文本真的特别长（例如超过200字符），我们才显示一个“查看更多”的眼睛图标作为辅助
+    // 但核心文本不再截断显示，而是交给 CSS (overflow-hidden + text-ellipsis)
+    const showPreviewBtn = str.length > 200;
     
     return (
-        <div className="group relative">
-            <span className="text-sm text-default-700 font-mono whitespace-nowrap" title={str}>
-                {isLong ? str.substring(0, 50) + '...' : str}
-            </span>
-            {isLong && (
+        <div className="group relative w-full">
+            {/* 使用 truncate 让 CSS 处理显示，不从 JS 截断数据 */}
+            <div className="text-sm text-default-700 font-mono truncate w-full" title={str}>
+                {str}
+            </div>
+            {showPreviewBtn && (
                 <Button 
                     isIconOnly 
                     size="sm" 
-                    variant="light" 
-                    className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 h-6 w-6 min-w-0"
+                    variant="flat" 
+                    className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 h-6 w-6 min-w-0 bg-content2/80 backdrop-blur shadow-sm"
                     onPress={() => {
                         setPreviewContent(
                              <div className="whitespace-pre-wrap break-all font-mono text-xs bg-content2 p-4 rounded max-h-[60vh] overflow-auto">

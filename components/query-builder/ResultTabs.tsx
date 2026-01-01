@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Button, Chip, Tabs, Tab } from "@nextui-org/react";
 import { 
     Table as TableIcon, Trash, Save, Braces, Download, Copy, FileCode, 
@@ -36,40 +36,103 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     onDelete, onExport, downloadFile
 }) => {
     const editorTheme = isDark ? vscodeDark : githubLight;
+    const tableContainerRef = useRef<HTMLDivElement>(null);
+    const [containerWidth, setContainerWidth] = useState(0);
 
     // --- Table State ---
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnOrder, setColumnOrder] = useState<ColumnOrderState>([]);
     const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 
-    // --- Table Setup ---
+    // 监听容器宽度变化，用于动态计算列宽
+    useEffect(() => {
+        if (!tableContainerRef.current) return;
+        
+        const observer = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                setContainerWidth(entry.contentRect.width);
+            }
+        });
+        
+        observer.observe(tableContainerRef.current);
+        return () => observer.disconnect();
+    }, []);
+
+    // --- Smart Column Width Algorithm ---
     const columnHelper = createColumnHelper<any>();
     
-    // 动态生成列定义
+    // 动态生成列定义，包含智能宽度计算
     const columns = useMemo(() => {
         if (queryResult.length === 0) return [];
         
-        // 过滤掉复杂对象和元数据，只显示简单字段
-        return Object.keys(queryResult[0])
-            .filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata')
-            .map(key =>
-                columnHelper.accessor(key, { 
-                    id: key,
-                    header: key, 
-                    // 使用 ContentRenderer 渲染单元格内容
-                    cell: info => <ContentRenderer value={info.getValue()} columnName={key} />,
-                    // 默认最小宽度，防止太窄
-                    minSize: 100,
-                })
-            );
-    }, [queryResult]);
+        const rawKeys = Object.keys(queryResult[0]).filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata');
+        if (rawKeys.length === 0) return [];
+
+        // 1. 计算每一列的“内容基准宽度”
+        // 采样前 20 行数据
+        const sampleData = queryResult.slice(0, 20);
+        const columnBaseWidths: Record<string, number> = {};
+        
+        rawKeys.forEach(key => {
+            // 表头长度
+            let maxCharLength = key.length; 
+            
+            // 采样数据长度
+            sampleData.forEach(row => {
+                const val = row[key];
+                if (val !== null && val !== undefined) {
+                    const str = String(val);
+                    // 简单的视觉长度估算：中文当2个字符
+                    const len = str.length + (str.match(/[^\x00-\xff]/g) || []).length; 
+                    if (len > maxCharLength) maxCharLength = len;
+                }
+            });
+
+            // 估算像素宽度: 
+            // 基础Padding(24) + 字符数 * 字符平均宽度(约8px)
+            // 限制：最小 80px, 最大 400px (防止某一列内容过长撑爆屏幕)
+            const estimatedWidth = Math.min(Math.max(maxCharLength * 8 + 24, 80), 400);
+            columnBaseWidths[key] = estimatedWidth;
+        });
+
+        // 2. 计算总基准宽度
+        const totalBaseWidth = rawKeys.reduce((sum, key) => sum + columnBaseWidths[key], 0);
+
+        // 3. 决定是否铺满屏幕
+        // 如果容器有宽度，且总基准宽度小于容器宽度，则按比例放大各列以铺满屏幕
+        let scaleFactor = 1;
+        if (containerWidth > 0 && totalBaseWidth < containerWidth) {
+             // 减去一些滚动条预留空间 (20px)
+             scaleFactor = (containerWidth - 20) / totalBaseWidth;
+        }
+
+        // 4. 生成最终列定义
+        return rawKeys.map(key => {
+            // 计算最终宽度
+            let finalWidth = Math.floor(columnBaseWidths[key] * scaleFactor);
+            // 即使是放大，也稍微限制一下最大值（比如不建议超过 800px），除非只有一两列
+            if (rawKeys.length > 2 && finalWidth > 600) finalWidth = 600;
+
+            return columnHelper.accessor(key, { 
+                id: key,
+                header: key, 
+                // 使用 ContentRenderer 渲染单元格内容
+                cell: info => <ContentRenderer value={info.getValue()} columnName={key} />,
+                // 设置计算出的宽度
+                size: finalWidth,
+                // 允许调整的最小宽度
+                minSize: 60,
+                maxSize: 1000,
+            });
+        });
+    }, [queryResult, containerWidth]); // 依赖 containerWidth 以便在窗口 resize 时重新计算填充
 
     // 当列定义变化时（例如新查询返回了不同结构），初始化列顺序
     useEffect(() => {
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
         }
-    }, [columns]);
+    }, [columns.length]); // 仅当列数量变化时重置顺序，避免 resize 导致重置
 
     const table = useReactTable({
         data: queryResult,
@@ -119,7 +182,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                             </div>
                         </div>
 
-                        <div className="overflow-auto flex-1 w-full bg-content1">
+                        <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
                             {/* 使用 table-fixed 配合列宽调整 */}
                             <table 
                                 className="w-full text-left border-collapse table-fixed"
@@ -209,10 +272,13 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                             {row.getVisibleCells().map(cell => (
                                                 <td 
                                                     key={cell.id} 
-                                                    className="p-2 text-sm text-default-700 align-middle overflow-hidden text-ellipsis border-r border-divider/10 last:border-0"
+                                                    className="p-2 text-sm text-default-700 align-middle overflow-hidden border-r border-divider/10 last:border-0"
                                                     style={{ width: cell.column.getSize() }}
                                                 >
-                                                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                                    {/* 内容渲染容器：确保 flex 布局以支持 full width，但交给 ContentRenderer 内部处理文本溢出 */}
+                                                    <div className="w-full">
+                                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                                    </div>
                                                 </td>
                                             ))}
                                         </tr>
@@ -229,7 +295,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                     </div>
                 </Tab>
 
-                {/* Tab 2: JSON 预览  (CodeMirror) */}
+                {/* Tab 2: JSON 预览 (CodeMirror) */}
                 <Tab
                     key="json"
                     title={

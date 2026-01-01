@@ -44,7 +44,7 @@ export default defineBackground(() => {
              
              // 3. 构建 Dashboard URL
              // 注意：这里使用 dashboard.html，这是 WXT 编译 entrypoints/dashboard/index.html 后的输出文件名
-             const dashboardUrl = browser.runtime.getURL(`dashboard.html#url=${encodeURIComponent(tab.url)}`);
+             const dashboardUrl = chrome.runtime.getURL(`dashboard.html#url=${encodeURIComponent(tab.url)}`);
 
              // 4. 更新当前标签页跳转到插件页面
              await browser.tabs.update(tabId, { url: dashboardUrl });
