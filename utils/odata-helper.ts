@@ -1,3 +1,4 @@
+
 export type ODataVersion = 'V2' | 'V3' | 'V4' | 'Unknown';
 
 export interface EntityProperty {
@@ -276,10 +277,16 @@ export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
         code += `  error: function(oError) { console.error(oError); }\n`;
         code += `});`;
     } else if (op === 'delete') {
-         code += `oModel.remove("/${es}${p.key}", {\n`;
-         code += `  success: function() { console.log("Deleted"); },\n`;
-         code += `  error: function(oError) { console.error(oError); }\n`;
-         code += `});`;
+         code += `// Delete ${p.keyPredicates?.length || 1} items\n`;
+         code += `var mParameters = {\n`;
+         code += `    success: function() { console.log("Delete success"); },\n`;
+         code += `    error: function(oError) { console.error("Delete failed", oError); }\n`;
+         code += `};\n\n`;
+         
+         const predicates = p.keyPredicates || [p.key];
+         predicates.forEach((pred: string) => {
+             code += `oModel.remove("/${es}${pred}", mParameters);\n`;
+         });
     } else if (op === 'create') {
         code += `var oData = ${JSON.stringify(p.data, null, 2)};\n`;
         code += `oModel.create("/${es}", oData, {\n`;
@@ -289,4 +296,44 @@ export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
     }
 
     return code; 
+};
+
+// 4. C# Code Generator
+export const generateCSharpDeleteCode = (entitySet: string, keyPredicates: string[], baseUrl: string) => {
+    const cleanUrl = baseUrl.replace(/\/$/, '');
+    let sb = `// C# HttpClient Example for deleting from ${entitySet}\n`;
+    sb += `using System;\nusing System.Net.Http;\nusing System.Threading.Tasks;\n\n`;
+    sb += `public async Task DeleteItemsAsync()\n{\n`;
+    sb += `    using (var client = new HttpClient())\n    {\n`;
+    sb += `        client.BaseAddress = new Uri("${cleanUrl}/");\n\n`;
+    
+    keyPredicates.forEach(pred => {
+        // 去除可能的开头括号以便美观，但 predicates 通常是 (ID=1)
+        sb += `        // DELETE ${entitySet}${pred}\n`;
+        sb += `        var response = await client.DeleteAsync("${entitySet}${pred}");\n`;
+        sb += `        response.EnsureSuccessStatusCode();\n`;
+    });
+    
+    sb += `    }\n}`;
+    return sb;
+};
+
+// 5. Java Olingo Code Generator
+export const generateJavaDeleteCode = (entitySet: string, keyPredicates: string[]) => {
+    let sb = `// Java Olingo V4 Example for deleting from ${entitySet}\n`;
+    sb += `// Assuming 'client' is an initialized ODataClient and 'serviceRoot' is set\n\n`;
+    
+    keyPredicates.forEach(pred => {
+        // pred format: (Key=Value) or (1)
+        // Olingo URI Builder usually takes the key value directly or a map
+        sb += `// DELETE ${entitySet}${pred}\n`;
+        sb += `URI uri = client.newURIBuilder(serviceRoot)\n`;
+        sb += `    .appendEntitySetSegment("${entitySet}")\n`;
+        // 简单处理：提示用户将 predicate 填入
+        sb += `    .appendKeySegment(${pred}) // Adjust key format as needed\n`;
+        sb += `    .build();\n`;
+        sb += `ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
+        sb += `ODataResponse response = request.execute();\n\n`;
+    });
+    return sb;
 };

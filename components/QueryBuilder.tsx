@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useDisclosure, Selection } from "@nextui-org/react";
-import { generateSAPUI5Code, ODataVersion, ParsedSchema } from '@/utils/odata-helper';
+import { generateSAPUI5Code, generateCSharpDeleteCode, generateJavaDeleteCode, ODataVersion, ParsedSchema } from '@/utils/odata-helper';
 import xmlFormat from 'xml-formatter';
 
 import { ParamsForm, SortItem } from './query-builder/ParamsForm';
@@ -40,7 +40,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
 
   // 模态框状态
   const { isOpen, onOpen, onOpenChange } = useDisclosure(); 
-  const [codePreview, setCodePreview] = useState('');
+  // CodePreview 现在可以是字符串或包含多语言的对象
+  const [codePreview, setCodePreview] = useState<string | { url: string, sapui5: string, csharp: string, java: string }>('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
   
   // 待删除的数据项缓存
@@ -264,24 +265,41 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
 
     setItemsToDelete(selectedItems);
     
-    // 生成 SAPUI5 代码预览 (Generate SAPUI5 Code Preview)
-    let code = `// SAPUI5 Code to delete ${selectedItems.length} selected items\n`;
-    code += `var oModel = this.getView().getModel();\n`;
-    code += `var mParameters = {\n`;
-    code += `    success: function() { console.log("Delete success"); },\n`;
-    code += `    error: function(oError) { console.error("Delete failed", oError); }\n`;
-    code += `};\n\n`;
+    // 收集所有需要删除的 Key Predicate
+    const predicates: string[] = [];
+    const urlList: string[] = [];
+    const baseUrl = url.endsWith('/') ? url : `${url}/`;
 
-    selectedItems.forEach((item) => {
-        const predicate = getKeyPredicate(item);
-        if (predicate) {
-            code += `oModel.remove("/${selectedEntity}${predicate}", mParameters);\n`;
+    selectedItems.forEach(item => {
+        const pred = getKeyPredicate(item);
+        if (pred) {
+            predicates.push(pred);
+            urlList.push(`DELETE ${baseUrl}${selectedEntity}${pred}`);
         } else {
-            code += `// Cannot identify key for item: ${JSON.stringify(item)}\n`;
+            urlList.push(`// SKIP: Cannot find key for item: ${JSON.stringify(item)}`);
         }
     });
 
-    setCodePreview(code);
+    // 1. URL List Code
+    const codeUrl = urlList.join('\n');
+
+    // 2. SAPUI5 Code
+    const codeSap = generateSAPUI5Code('delete', selectedEntity, { keyPredicates: predicates }, version);
+
+    // 3. C# Code
+    const codeCSharp = generateCSharpDeleteCode(selectedEntity, predicates, baseUrl);
+
+    // 4. Java Code
+    const codeJava = generateJavaDeleteCode(selectedEntity, predicates);
+
+    // 传递多语言代码对象给 Modal
+    setCodePreview({
+        url: codeUrl,
+        sapui5: codeSap,
+        csharp: codeCSharp,
+        java: codeJava
+    });
+    
     setModalAction('delete');
     onOpen();
   };
@@ -353,7 +371,11 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       if (modalAction === 'delete') {
           executeBatchDelete();
       } else {
-          navigator.clipboard.writeText(codePreview);
+          // 对于非删除操作，Modal 内部现在有复制按钮，
+          // 但为了兼容，如果这里传了 text，我们也可以在这里 fallback handle
+          if (typeof codePreview === 'string') {
+              navigator.clipboard.writeText(codePreview);
+          }
       }
   };
 
