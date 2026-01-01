@@ -207,65 +207,54 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     const currentAscKeys = useMemo(() => new Set(sortItems.filter(i => i.order === 'asc').map(i => i.field)), [sortItems]);
     const currentDescKeys = useMemo(() => new Set(sortItems.filter(i => i.order === 'desc').map(i => i.field)), [sortItems]);
 
-    // 处理升序变化
-    const handleAscChange = (keys: Selection) => {
-        const newSet = new Set(keys);
+    // 统一处理排序变更，防止重复并保持顺序
+    const updateSortItems = (newSelectedKeys: Set<React.Key>, type: 'asc' | 'desc') => {
+        // 1. 保留另一种类型的排序项 (例如正在更新 asc，则保留所有 desc)
+        const otherTypeItems = sortItems.filter(item => item.order !== type);
         
-        // 1. 保留原本是 Desc 的项 (不受影响)
-        // 2. 找出原本是 Asc 但现在依然被选中的项 (保留顺序)
-        // 3. 添加新选中的 Asc 项
+        // 2. 找出当前类型中，依然被选中的项 (保留它们原本的相对顺序)
+        const keptCurrentTypeItems = sortItems.filter(item => item.order === type && newSelectedKeys.has(item.field));
         
-        const existingDescItems = sortItems.filter(i => i.order === 'desc');
-        const existingAscItems = sortItems.filter(i => i.order === 'asc' && newSet.has(i.field));
+        // 3. 找出新增的项
+        const existingKeySet = new Set(sortItems.map(i => i.field));
+        const newItems: SortItem[] = [];
         
-        const existingAscKeySet = new Set(existingAscItems.map(i => i.field));
-        const newAscItems = Array.from(newSet)
-            .filter(k => !existingAscKeySet.has(String(k)))
-            .map(k => ({ field: String(k), order: 'asc' as const }));
-
-        // 这里的顺序策略：先保留之前的 Desc，然后是之前的 Asc，然后是新增的 Asc
-        // 为了保持用户的预期，通常我们希望整体列表反映操作顺序。
-        // 但既然分开了两个框，我们尽量保持 `sortItems` 里的相对顺序稳定。
-        // 简单策略：重建列表 -> [所有Desc] + [所有Asc] 或者混合。
-        // 为了简单且符合直觉：我们过滤掉旧的Asc，保留Desc，然后追加新的Asc集合。
-        // 但这样会导致每次修改Asc，所有的Asc字段都跑到排序末尾。
-        // 更好的策略：遍历 `sortItems`，保留还在集合里的；然后追加新的。
-        
-        const nextItems = sortItems.filter(item => {
-            if (item.order === 'desc') return true; // 保留 Desc
-            return newSet.has(item.field); // 保留还在选中的 Asc
-        });
-
-        // 查找哪些是纯新增的 key
-        const currentKeys = new Set(sortItems.map(i => i.field));
-        Array.from(newSet).forEach(k => {
-            const keyStr = String(k);
-            if (!currentKeys.has(keyStr)) {
-                nextItems.push({ field: keyStr, order: 'asc' });
+        newSelectedKeys.forEach(key => {
+            const field = String(key);
+            if (!existingKeySet.has(field)) {
+                newItems.push({ field, order: type });
             }
         });
 
+        // 4. 合并结果：先是保留的(包括另一种类型和当前类型已有的)，然后是新增的
+        // 注意：为了保持直观，我们尽量维持列表的稳定性。
+        // 策略：重建列表。
+        // - 我们遍历旧的 sortItems，如果它还在新集合里(或者是另一种类型)，就保留。
+        // - 然后追加新选中的。
+        
+        const nextItems = sortItems.filter(item => {
+            if (item.order !== type) return true; // 保留另一种类型
+            return newSelectedKeys.has(item.field); // 保留当前类型中依然选中的
+        });
+
+        // 追加新增项
+        nextItems.push(...newItems);
+        
         setSortItems(nextItems);
     };
 
-    // 处理降序变化
+    const handleAscChange = (keys: Selection) => {
+        const selectedSet = keys === "all" 
+            ? new Set(sortOptions.filter(o => !currentDescKeys.has(o.name)).map(o => o.name))
+            : new Set(keys);
+        updateSortItems(selectedSet, 'asc');
+    };
+
     const handleDescChange = (keys: Selection) => {
-        const newSet = new Set(keys);
-        
-        const nextItems = sortItems.filter(item => {
-            if (item.order === 'asc') return true; // 保留 Asc
-            return newSet.has(item.field); // 保留还在选中的 Desc
-        });
-
-        const currentKeys = new Set(sortItems.map(i => i.field));
-        Array.from(newSet).forEach(k => {
-            const keyStr = String(k);
-            if (!currentKeys.has(keyStr)) {
-                nextItems.push({ field: keyStr, order: 'desc' });
-            }
-        });
-
-        setSortItems(nextItems);
+        const selectedSet = keys === "all"
+            ? new Set(sortOptions.filter(o => !currentAscKeys.has(o.name)).map(o => o.name))
+            : new Set(keys);
+        updateSortItems(selectedSet, 'desc');
     };
 
     return (
@@ -296,6 +285,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             selectionMode="multiple"
                             selectedKeys={currentAscKeys}
                             onSelectionChange={handleAscChange}
+                            disabledKeys={currentDescKeys} // 实时互斥：禁用已在降序中选中的字段
                             size="sm"
                             variant="bordered"
                             classNames={{ value: "text-xs" }}
@@ -308,9 +298,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                                     key={p.name} 
                                     value={p.name} 
                                     textValue={p.name}
-                                    // 互斥逻辑：如果在 Desc 集合中，则禁用
-                                    isDisabled={currentDescKeys.has(p.name)}
-                                    className={currentDescKeys.has(p.name) ? "opacity-50" : ""}
                                 >
                                     <div className="flex items-center gap-2 justify-between">
                                         <div className="flex items-center gap-2">
@@ -336,6 +323,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             selectionMode="multiple"
                             selectedKeys={currentDescKeys}
                             onSelectionChange={handleDescChange}
+                            disabledKeys={currentAscKeys} // 实时互斥：禁用已在升序中选中的字段
                             size="sm"
                             variant="bordered"
                             classNames={{ value: "text-xs" }}
@@ -348,9 +336,6 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                                     key={p.name} 
                                     value={p.name} 
                                     textValue={p.name}
-                                    // 互斥逻辑：如果在 Asc 集合中，则禁用 
-                                    isDisabled={currentAscKeys.has(p.name)}
-                                    className={currentAscKeys.has(p.name) ? "opacity-50" : ""}
                                 >
                                     <div className="flex items-center gap-2 justify-between">
                                         <div className="flex items-center gap-2">
