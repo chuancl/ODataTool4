@@ -112,7 +112,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             />
 
             {/* --- 左侧控制面板 (实体, 过滤, 分页) [col-span-3] --- */}
-            <div className="md:col-span-3 flex flex-col gap-2">
+            {/* 使用 gap-4 以匹配右侧 grid gap */}
+            <div className="md:col-span-3 flex flex-col gap-4">
                 {/* 1. 实体集选择 */}
                 <Select
                     label="实体集 (Entity Set)"
@@ -123,14 +124,14 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     size="sm"
                     items={entitySets.map(e => ({ key: e, label: e }))}
                     classNames={{
-                        trigger: "min-h-10"
+                        trigger: "min-h-10 border-default-200"
                     }}
                 >
                     {(item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>}
                 </Select>
 
-                {/* 2. 工具栏：过滤 (Flex-1) + 分页 (Flex-None) */}
-                <div className="flex items-center gap-1 w-full">
+                {/* 2. 工具栏：过滤 (固定宽度) + 分页 (自然排列) */}
+                <div className="flex items-center gap-2">
                     <Tooltip content={filter || "构建过滤器 ($filter)"} placement="bottom">
                         <Button 
                             color={filter ? "primary" : "default"} 
@@ -139,7 +140,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             isDisabled={!currentSchema}
                             size="sm"
                             startContent={filter ? <ListFilter size={16} /> : <Wand2 size={16} />}
-                            className="flex-1 justify-start h-8 min-h-8 px-2 relative"
+                            className={`h-10 px-3 min-w-0 border-default-200 ${filter ? "w-[120px]" : "w-[100px]"}`}
                         >
                             <span className="truncate text-xs">
                                 {filter ? "已过滤" : "过滤 Filter"}
@@ -150,11 +151,13 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                         </Button>
                     </Tooltip>
 
-                    <PaginationControls 
-                        top={top} setTop={setTop}
-                        skip={skip} setSkip={setSkip}
-                        count={count} setCount={setCount}
-                    />
+                    <div className="flex-1 flex justify-end">
+                        <PaginationControls 
+                            top={top} setTop={setTop}
+                            skip={skip} setSkip={setSkip}
+                            count={count} setCount={setCount}
+                        />
+                    </div>
                 </div>
             </div>
 
