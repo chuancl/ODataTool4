@@ -209,7 +209,7 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
 
     // 统一处理排序变更，防止重复并保持顺序
     const updateSortItems = (newSelectedKeys: Set<React.Key>, type: 'asc' | 'desc') => {
-        // 1. 保留另一种类型的排序项 (例如正在更新 asc，则保留所有 desc)
+        // 1. 保留另一种类型的排序项
         const otherTypeItems = sortItems.filter(item => item.order !== type);
         
         // 2. 找出当前类型中，依然被选中的项 (保留它们原本的相对顺序)
@@ -226,18 +226,13 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             }
         });
 
-        // 4. 合并结果：先是保留的(包括另一种类型和当前类型已有的)，然后是新增的
-        // 注意：为了保持直观，我们尽量维持列表的稳定性。
-        // 策略：重建列表。
-        // - 我们遍历旧的 sortItems，如果它还在新集合里(或者是另一种类型)，就保留。
-        // - 然后追加新选中的。
-        
+        // 4. 重建列表：优先保留原有顺序，最后追加新增
+        // 这里的逻辑：先过滤掉当前类型但不再被选中的，然后追加当前类型新增的
         const nextItems = sortItems.filter(item => {
             if (item.order !== type) return true; // 保留另一种类型
             return newSelectedKeys.has(item.field); // 保留当前类型中依然选中的
         });
 
-        // 追加新增项
         nextItems.push(...newItems);
         
         setSortItems(nextItems);
@@ -285,7 +280,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             selectionMode="multiple"
                             selectedKeys={currentAscKeys}
                             onSelectionChange={handleAscChange}
-                            disabledKeys={currentDescKeys} // 实时互斥：禁用已在降序中选中的字段
+                            // 强制转换为数组，确保 UI 立即刷新互斥状态
+                            disabledKeys={Array.from(currentDescKeys)} 
                             size="sm"
                             variant="bordered"
                             classNames={{ value: "text-xs" }}
@@ -323,7 +319,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                             selectionMode="multiple"
                             selectedKeys={currentDescKeys}
                             onSelectionChange={handleDescChange}
-                            disabledKeys={currentAscKeys} // 实时互斥：禁用已在升序中选中的字段
+                            // 强制转换为数组，确保 UI 立即刷新互斥状态
+                            disabledKeys={Array.from(currentAscKeys)} 
                             size="sm"
                             variant="bordered"
                             classNames={{ value: "text-xs" }}

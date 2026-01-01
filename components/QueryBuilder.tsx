@@ -96,6 +96,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     if (expand) params.append('$expand', expand);
     
     if (sortItems.length > 0) {
+        // 使用空格连接字段和排序方向，例如 "Name asc"
         const orderbyStr = sortItems.map(item => `${item.field} ${item.order}`).join(',');
         params.append('$orderby', orderbyStr);
     }
@@ -107,9 +108,14 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       else params.append('$inlinecount', 'allpages');
     }
     
-    const queryString = params.toString();
-    const displayQuery = queryString ? `?${decodeURIComponent(queryString)}` : '';
-    setGeneratedUrl(`${baseUrl}${selectedEntity}${displayQuery}`);
+    // URLSearchParams 默认会将空格编码为 '+'。
+    // 为了符合 OData 常见格式 (使用 %20 或直接空格显示)，我们手动处理一下显示字符串。
+    // replace(/\+/g, '%20') 将 '+' 替换为 '%20'
+    // decodeURIComponent 将 '%20' 替换为空格，将其他编码字符还原
+    const rawQuery = params.toString();
+    const cleanQuery = rawQuery ? `?${decodeURIComponent(rawQuery.replace(/\+/g, '%20'))}` : '';
+    
+    setGeneratedUrl(`${baseUrl}${selectedEntity}${cleanQuery}`);
   }, [url, selectedEntity, filter, select, expand, sortItems, top, skip, count, version]);
 
   // 3. 执行查询
@@ -120,6 +126,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
     setQueryResult([]);
 
     try {
+      // 这里的 generatedUrl 可能包含空格，浏览器的 fetch 会自动正确编码 (变成 %20)
       const [jsonRes, xmlRes] = await Promise.allSettled([
         fetch(generatedUrl, { headers: { 'Accept': 'application/json' } }),
         fetch(generatedUrl, { headers: { 'Accept': 'application/xml, application/atom+xml' } })
