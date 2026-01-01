@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Image, Chip, Link, Button, Tooltip, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
+import { Image, Chip, Link, Button, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
 import { 
     FileImage, FileVideo, FileAudio, FileText, FileArchive, FileCode, 
     FileDigit, File, Download, Copy, Eye 
@@ -7,7 +7,7 @@ import {
 
 interface ContentRendererProps {
     value: any;
-    columnName?: string; // 可选：利用列名辅助判断（暂未深度使用，保留接口）
+    columnName?: string;
 }
 
 // 常见文件头魔数 (Base64前缀)
@@ -19,7 +19,7 @@ const MAGIC_NUMBERS: Record<string, string> = {
     'UklGR': 'image/webp',
     'JVBER': 'application/pdf',
     'UEsDB': 'application/zip',
-    'MQ': 'application/x-msdownload', // exe/dll (simple check)
+    'MQ': 'application/x-msdownload', 
 };
 
 // 常见扩展名映射
@@ -53,26 +53,32 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
     const detected = useMemo(() => {
         if (value === null || value === undefined) return { type: 'empty' };
         
-        const strVal = String(value);
+        const strVal = String(value).trim();
+
+        // 0. 判断 Data URI (e.g. data:image/png;base64,...)
+        if (strVal.startsWith('data:')) {
+            if (strVal.startsWith('data:image/')) return { type: 'image', src: strVal, mode: 'data_uri' };
+            if (strVal.startsWith('data:video/')) return { type: 'video', src: strVal, mode: 'data_uri' };
+            if (strVal.startsWith('data:audio/')) return { type: 'audio', src: strVal, mode: 'data_uri' };
+            return { type: 'file', src: strVal, mode: 'data_uri' };
+        }
 
         // 1. 判断 URL
-        // 简单正则判断是否以 http/https 开头或看起来像相对路径
         const isUrl = /^(https?:\/\/.+|\/.+\.\w+)$/i.test(strVal);
         if (isUrl) {
-            const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0]; // 获取扩展名，去除query参数
+            const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
             if (ext && EXTENSIONS[ext]) {
                 return { ...EXTENSIONS[ext], src: strVal, mode: 'url' };
             }
-            // 如果没有明确扩展名，但看起来像图片URL（包含 image 等关键词），可以尝试作为图片
             if (strVal.match(/\.(img|pic|photo)/i)) return { type: 'image', src: strVal, mode: 'url' };
         }
 
         // 2. 判断 Base64
-        // Base64 正则 (放宽一点条件，长度至少50才尝试渲染为媒体，避免误判短字符串)
-        const isBase64Like = strVal.length > 50 && /^[A-Za-z0-9+/]*={0,2}$/.test(strVal.replace(/\s/g, ''));
+        // 放宽正则条件
+        const isBase64Like = strVal.length > 20 && /^[A-Za-z0-9+/]*={0,2}$/.test(strVal.replace(/\s/g, ''));
         
         if (isBase64Like) {
-            // 检查魔数
+            // A. 检查标准文件头 (Magic Numbers)
             for (const [magic, mime] of Object.entries(MAGIC_NUMBERS)) {
                 if (strVal.startsWith(magic)) {
                     if (mime.startsWith('image/')) {
@@ -83,14 +89,33 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                     }
                 }
             }
-            // 如果没有匹配到魔数，但列名包含 Image/Photo/Pic 等，强制尝试 BMP 或通用 Image
-            if (columnName && /image|photo|picture|icon|logo/i.test(columnName)) {
-                 // 默认尝试 png，或者是 bmp (OData V2 经常返回 raw binary bmp)
-                 // 这里做一个通用的 fallback，优先尝试 png
-                 return { type: 'image', src: `data:image/png;base64,${strVal}`, mode: 'base64_fallback' };
+
+            // B. 特殊处理：OLE Wrapped BMP (常见于 Northwind 等旧 OData 服务)
+            // Access 数据库通常会在图片数据前添加 78 字节的 OLE Header
+            // 78 bytes * 8 bits / 6 bits per char = 104 characters
+            if (strVal.length > 104) {
+                // 检查第 104 个字符开始是否是 BMP 魔数 (Base64 'Qk' = 'BM')
+                const oleSlice = strVal.substring(104, 120);
+                if (oleSlice.startsWith('Qk')) {
+                    return { 
+                        type: 'image', 
+                        src: `data:image/bmp;base64,${strVal.substring(104)}`, 
+                        mode: 'base64_ole', 
+                        mime: 'image/bmp' 
+                    };
+                }
             }
 
-            // 纯二进制数据，不识别为特定媒体
+            // C. 启发式回退 (基于列名)
+            // 如果没有匹配到魔数，但列名暗示是图片，尝试强制渲染
+            if (columnName && /image|photo|picture|icon|logo/i.test(columnName)) {
+                 // 如果列名包含 'picture' (Northwind习惯), 优先尝试 BMP
+                 // 否则默认尝试 PNG
+                 const fallbackMime = /picture|bmp/i.test(columnName) ? 'image/bmp' : 'image/png';
+                 return { type: 'image', src: `data:${fallbackMime};base64,${strVal}`, mode: 'base64_fallback', mime: fallbackMime };
+            }
+
+            // D. 纯二进制数据
             return { type: 'binary', length: strVal.length, content: strVal };
         }
 
@@ -100,7 +125,20 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
 
     const handlePreview = () => {
         if (detected.type === 'image') {
-            setPreviewContent(<Image src={detected.src} alt="Preview" className="max-w-full max-h-[80vh] object-contain" />);
+            setPreviewContent(
+                <div className="flex flex-col gap-2 items-center">
+                    <Image 
+                        src={detected.src} 
+                        alt="Preview" 
+                        className="max-w-full max-h-[80vh] object-contain"
+                        // 移除 NextUI 的默认加载样式，避免干扰
+                        disableSkeleton
+                    />
+                    <div className="text-tiny text-default-400 font-mono">
+                        {detected.mime || 'unknown mime'} | {detected.mode}
+                    </div>
+                </div>
+            );
             onOpen();
         } else if (detected.type === 'binary' || detected.type === 'text') {
             setPreviewContent(
@@ -122,21 +160,20 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                         src={detected.src} 
                         alt="img" 
                         classNames={{ wrapper: "w-full h-full", img: "w-full h-full object-cover" }}
-                        // 如果加载失败，回退到图标
                         fallbackSrc="https://via.placeholder.com/40?text=ERR"
+                        disableSkeleton
                     />
                     <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                         <Eye size={16} className="text-white" />
                     </div>
                 </div>
-                <div className="flex flex-col">
-                    <span className="text-[10px] text-default-500 font-mono truncate max-w-[100px]">
-                        {detected.mode === 'base64' ? 'Base64 Image' : 'Image URL'}
+                <div className="flex flex-col justify-center">
+                    <span className="text-[10px] text-default-500 font-mono truncate max-w-[100px]" title={columnName}>
+                        {detected.mode === 'base64_ole' ? 'OLE Image' : 'Image'}
                     </span>
                     <span className="text-[9px] text-default-400">{detected.mime?.split('/')[1]?.toUpperCase() || 'IMG'}</span>
                 </div>
                 
-                {/* 预览模态框 */}
                 <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="2xl" backdrop="blur">
                     <ModalContent>
                         <ModalHeader>Image Preview</ModalHeader>
@@ -186,7 +223,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                     <span className="text-[10px] font-bold text-default-700 truncate" title={label}>{label}</span>
                     <div className="flex gap-1 mt-0.5">
                         {detected.src && (
-                            <Link href={detected.src} download isExternal size="sm" className="text-[9px] cursor-pointer text-primary hover:underline">
+                            <Link href={detected.src} download={`download.${detected.mime?.split('/')[1] || 'bin'}`} isExternal size="sm" className="text-[9px] cursor-pointer text-primary hover:underline">
                                 <Download size={10} className="mr-0.5"/> Download
                             </Link>
                         )}
