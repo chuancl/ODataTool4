@@ -264,21 +264,24 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
 
     setItemsToDelete(selectedItems);
     
-    // 生成预览信息
-    let previewText = `// 准备删除 ${selectedItems.length} 条数据 (Preparing to delete ${selectedItems.length} items):\n\n`;
-    
-    const baseUrl = url.endsWith('/') ? url : `${url}/`;
-    
-    selectedItems.forEach(item => {
+    // 生成 SAPUI5 代码预览 (Generate SAPUI5 Code Preview)
+    let code = `// SAPUI5 Code to delete ${selectedItems.length} selected items\n`;
+    code += `var oModel = this.getView().getModel();\n`;
+    code += `var mParameters = {\n`;
+    code += `    success: function() { console.log("Delete success"); },\n`;
+    code += `    error: function(oError) { console.error("Delete failed", oError); }\n`;
+    code += `};\n\n`;
+
+    selectedItems.forEach((item) => {
         const predicate = getKeyPredicate(item);
         if (predicate) {
-            previewText += `DELETE ${baseUrl}${selectedEntity}${predicate}\n`;
+            code += `oModel.remove("/${selectedEntity}${predicate}", mParameters);\n`;
         } else {
-            previewText += `// SKIP: 无法识别主键 (Cannot identify Primary Key): ${JSON.stringify(item)}\n`;
+            code += `// Cannot identify key for item: ${JSON.stringify(item)}\n`;
         }
     });
 
-    setCodePreview(previewText);
+    setCodePreview(code);
     setModalAction('delete');
     onOpen();
   };
