@@ -37,7 +37,13 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
 }) => {
     const editorTheme = isDark ? vscodeDark : githubLight;
     const tableContainerRef = useRef<HTMLDivElement>(null);
-    const [containerWidth, setContainerWidth] = useState(0);
+    
+    // 初始化宽度使用 Window 宽度做兜底，避免首次渲染时宽度为 0 导致列宽计算异常（不铺满）
+    // 减去 64px 作为大概的 Padding/Sidebar 预留
+    const [containerWidth, setContainerWidth] = useState(() => {
+        if (typeof window !== 'undefined') return Math.max(800, window.innerWidth - 64);
+        return 1200;
+    });
 
     // --- Table State ---
     const [sorting, setSorting] = useState<SortingState>([]);
@@ -50,8 +56,10 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         
         const observer = new ResizeObserver(entries => {
             for (const entry of entries) {
-                // 使用 contentRect.width 获取容器内容宽度（不含滚动条）
-                setContainerWidth(entry.contentRect.width);
+                // 只在宽度有效时更新，防止隐藏 Tab 导致宽度变 0
+                if (entry.contentRect.width > 0) {
+                    setContainerWidth(entry.contentRect.width);
+                }
             }
         });
         
@@ -66,19 +74,18 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     const columns = useMemo(() => {
         if (queryResult.length === 0) return [];
         
-        // 过滤掉元数据，保留所有数据字段（包括 null 值，避免之前因第一行是 null 而丢列的问题）
+        // 过滤掉元数据，保留所有数据字段
         const rawKeys = Object.keys(queryResult[0]).filter(key => key !== '__metadata');
         if (rawKeys.length === 0) return [];
 
         // 1. 计算每一列的“内容基准宽度”
-        // 采样前 20 行数据 (用户要求：减少采样数量，只需相对美观)
+        // 采样前 20 行数据
         const sampleData = queryResult.slice(0, 20);
-        const columnMeta: Record<string, { baseWidth: number }> = {};
+        const columnMeta: Record<string, number> = {};
         let totalBaseWidth = 0;
         
         rawKeys.forEach(key => {
             // 表头权重 (表头通常有加粗、排序图标等，给予 1.3 倍字符权重)
-            // 确保表头至少保留一定宽度（例如 4个字符宽），防止极短的列名拥挤
             let maxWeightedLen = Math.max(key.length * 1.3, 4); 
             
             sampleData.forEach(row => {
@@ -86,28 +93,16 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                 if (val !== null && val !== undefined) {
                     const str = String(val);
                     
-                    // 字符宽度估算: 
-                    // ASCII 字符 = 1
-                    // 宽字符 (中文/全角等) = 1.6
+                    // 字符宽度估算
                     let len = 0;
                     for (let i = 0; i < str.length; i++) {
                         len += (str.charCodeAt(i) > 255) ? 1.6 : 1;
                     }
 
-                    // 长度权重衰减算法 (Logarithmic-like scaling):
-                    // "本身内容占同行内高，那相对最小列宽也更大"
-                    // - 短文本 (<=30): 100% 权重，直接反映长度
-                    // - 中长文本 (30-80): 50% 权重，增长变缓
-                    // - 超长文本 (>80): 20% 权重，避免极长文本把列撑得过大
+                    // 长度权重衰减算法
                     let weightedLen = len;
-                    if (len > 30) {
-                        weightedLen = 30 + (len - 30) * 0.5;
-                    }
-                    if (weightedLen > 80) { // 此时 weightedLen 其实对应原始长度 130 左右
-                        weightedLen = 80 + (weightedLen - 80) * 0.2;
-                    }
-
-                    // 最终限制一个单列采样的最大权重值，防止异常数据
+                    if (len > 30) weightedLen = 30 + (len - 30) * 0.5;
+                    if (weightedLen > 80) weightedLen = 80 + (weightedLen - 80) * 0.2;
                     if (weightedLen > 250) weightedLen = 250;
 
                     if (weightedLen > maxWeightedLen) maxWeightedLen = weightedLen;
@@ -115,28 +110,37 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
             });
 
             // 估算像素宽度: 
-            // 字符权重 * 8px (字体大小) + Padding/Icons (32px)
-            // 限制：最小 80px (防止列太窄无法操作), 最大 500px (作为基准，若屏幕够宽后续会被拉伸)
-            const basePx = Math.min(Math.max(Math.ceil(maxWeightedLen * 8) + 32, 80), 500);
+            // 字符权重 * 8px (字体大小) + Padding (24px)
+            // 限制：最小 80px，最大 400px (作为基准权重，如果屏幕宽，会按比例放大)
+            const basePx = Math.min(Math.max(Math.ceil(maxWeightedLen * 8) + 24, 80), 400);
             
-            columnMeta[key] = { baseWidth: basePx };
+            columnMeta[key] = basePx;
             totalBaseWidth += basePx;
         });
 
         // 2. 决定是否铺满屏幕 (Responsive Fill)
         // 核心大前提：如果内容不足以撑满屏幕，优先按比例扩宽各个列，让表格铺满全屏。
-        // contentRect.width 不包含滚动条，减去 2px 作为边框缓冲，确保不触发横向滚动条
         const availableWidth = containerWidth > 0 ? containerWidth - 2 : 0;
-        
-        // 如果 "总基准宽度" < "屏幕可用宽度"，则按比例拉伸所有列
-        // 否则，保持基准宽度，允许横向滚动
         const shouldScale = availableWidth > 0 && totalBaseWidth < availableWidth;
         const scaleRatio = shouldScale ? (availableWidth / totalBaseWidth) : 1;
 
-        // 4. 生成最终列定义
-        return rawKeys.map(key => {
+        // 4. 生成最终列定义 (Two-pass logic to handle rounding errors)
+        let currentTotalWidth = 0;
+
+        return rawKeys.map((key, index) => {
             // 计算最终宽度
-            const finalWidth = Math.floor(columnMeta[key].baseWidth * scaleRatio);
+            let finalWidth = Math.floor(columnMeta[key] * scaleRatio);
+            
+            // 关键修正：如果是铺满模式，将剩余的像素（由于Math.floor丢失的）补给最后一列
+            if (shouldScale && index === rawKeys.length - 1) {
+                const remaining = availableWidth - currentTotalWidth - finalWidth;
+                // 只有当剩余像素合理时才补（避免极端情况）
+                if (remaining > 0 && remaining < 100) {
+                    finalWidth += remaining;
+                }
+            }
+            
+            currentTotalWidth += finalWidth;
 
             return columnHelper.accessor(key, { 
                 id: key,
@@ -147,13 +151,13 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                 size: finalWidth,
                 // 允许调整的最小宽度
                 minSize: 60,
-                // 允许的最大宽度设大一点，方便用户手动拖拽
+                // 允许的最大宽度设大一点，方便用户手动拖拽调整
                 maxSize: 5000,
             });
         });
     }, [queryResult, containerWidth]); // 依赖 containerWidth 以便在窗口 resize 时重新计算填充
 
-    // 当列定义变化时（例如新查询返回了不同结构），初始化列顺序
+    // 当列定义变化时，初始化列顺序
     useEffect(() => {
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
@@ -230,7 +234,6 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                     onDragStart={(e) => {
                                                         setDraggingColumn(header.column.id);
                                                         e.dataTransfer.effectAllowed = 'move';
-                                                        // 设置拖拽时的透明度
                                                         e.currentTarget.style.opacity = '0.5';
                                                     }}
                                                     onDragEnd={(e) => {
@@ -245,7 +248,6 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                             const dragIndex = newOrder.indexOf(draggingColumn);
                                                             const dropIndex = newOrder.indexOf(header.column.id);
                                                             if (dragIndex !== -1 && dropIndex !== -1) {
-                                                                // 移动数组元素
                                                                 newOrder.splice(dragIndex, 1);
                                                                 newOrder.splice(dropIndex, 0, draggingColumn);
                                                                 setColumnOrder(newOrder);
@@ -304,7 +306,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                     className="p-2 text-sm text-default-700 align-middle overflow-hidden border-r border-divider/10 last:border-0"
                                                     style={{ width: cell.column.getSize() }}
                                                 >
-                                                    {/* 内容渲染容器：确保 flex 布局以支持 full width，但交给 ContentRenderer 内部处理文本溢出 */}
+                                                    {/* 内容渲染容器：确保 flex 布局以支持 full width */}
                                                     <div className="w-full">
                                                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                                     </div>
