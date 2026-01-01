@@ -7,6 +7,7 @@ import { json } from '@codemirror/lang-json';
 import { xml } from '@codemirror/lang-xml';
 import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { githubLight } from '@uiw/codemirror-theme-github';
+import { ContentRenderer } from './ContentRenderer';
 
 interface ResultTabsProps {
     queryResult: any[];
@@ -29,10 +30,16 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     const columnHelper = createColumnHelper<any>();
     const columns = useMemo(() => {
         if (queryResult.length === 0) return [];
+        
+        // Filter out complex objects and metadata for the simple table view
         return Object.keys(queryResult[0])
             .filter(key => typeof queryResult[0][key] !== 'object' && key !== '__metadata')
             .map(key =>
-                columnHelper.accessor(key, { header: key, cell: info => String(info.getValue()) })
+                columnHelper.accessor(key, { 
+                    header: key, 
+                    // Use ContentRenderer for the cell content
+                    cell: info => <ContentRenderer value={info.getValue()} columnName={key} />
+                })
             );
     }, [queryResult]);
 
@@ -81,7 +88,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                     {table.getHeaderGroups().map(headerGroup => (
                                         <tr key={headerGroup.id}>
                                             {headerGroup.headers.map(header => (
-                                                <th key={header.id} className="border-b border-divider p-3 text-xs font-semibold bg-content2 whitespace-nowrap text-default-600">
+                                                <th key={header.id} className="border-b border-divider p-3 text-xs font-semibold bg-content2 whitespace-nowrap text-default-600 shadow-sm">
                                                     {flexRender(header.column.columnDef.header, header.getContext())}
                                                 </th>
                                             ))}
@@ -92,7 +99,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                     {table.getRowModel().rows.map(row => (
                                         <tr key={row.id} className="hover:bg-content2/50 transition-colors border-b border-divider/50 last:border-0">
                                             {row.getVisibleCells().map(cell => (
-                                                <td key={cell.id} className="p-3 text-sm whitespace-nowrap text-default-700">
+                                                <td key={cell.id} className="p-2 text-sm text-default-700 align-middle">
                                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                                 </td>
                                             ))}
