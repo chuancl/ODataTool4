@@ -145,14 +145,21 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
         setSelect(Array.from(new Set(finalSelection)).join(','));
     };
 
-    // --- Expand 字段逻辑 (动态递归生成) ---
+    // --- Expand 字段逻辑 (动态递归生成 + 循环检测) ---
     const expandItems = useMemo(() => {
         if (!currentSchema || !schema) return [];
         
         // 获取当前已选中的 keys 集合
         const selectedSet = new Set(expand ? expand.split(',') : []);
 
-        const buildRecursive = (entity: EntityType, parentPath: string, level: number): any[] => {
+        /**
+         * 递归构建 Expand 选项树
+         * @param entity 当前实体定义
+         * @param parentPath 当前属性路径前缀 (如 "Category/Products")
+         * @param level 当前深度
+         * @param ancestors 祖先实体类型列表 (用于检测循环引用)
+         */
+        const buildRecursive = (entity: EntityType, parentPath: string, level: number, ancestors: string[]): any[] => {
             const navs = entity.navigationProperties;
             if (!navs || navs.length === 0) return [];
             
@@ -161,9 +168,22 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             const sortedNavs = [...navs].sort((a, b) => a.name.localeCompare(b.name));
 
             for (const nav of sortedNavs) {
+                // 1. 解析目标实体类型名称
+                let targetTypeName = nav.targetType;
+                if (targetTypeName?.startsWith('Collection(')) {
+                    targetTypeName = targetTypeName.slice(11, -1);
+                }
+                targetTypeName = targetTypeName?.split('.').pop() || "";
+
+                // 2. 循环引用检测 (Circular Reference Check)
+                // 如果目标实体类型已经在祖先链中出现过，则跳过该选项，防止无限循环
+                if (ancestors.includes(targetTypeName)) {
+                    continue; 
+                }
+
                 const currentPath = parentPath ? `${parentPath}/${nav.name}` : nav.name;
                 
-                // 添加当前层级的节点
+                // 3. 添加当前层级的节点
                 result.push({
                     name: currentPath,
                     label: nav.name,
@@ -173,21 +193,15 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     level: level
                 });
 
-                // 核心逻辑：只有当父级节点被选中时，才递归生成子级节点
-                // 这样实现了 "点击展开下级" 的效果
+                // 4. 递归下钻逻辑
+                // 只有当父级节点被选中时，才递归生成子级节点
                 if (selectedSet.has(currentPath)) {
-                     // 解析 Target Entity
-                     let targetTypeName = nav.targetType;
-                     if (targetTypeName?.startsWith('Collection(')) {
-                        targetTypeName = targetTypeName.slice(11, -1);
-                     }
-                     targetTypeName = targetTypeName?.split('.').pop() || "";
-                     
                      const nextEntity = schema.entities.find(e => e.name === targetTypeName);
                      if (nextEntity) {
-                         // 递归查找，设置最大深度防止死循环（虽然有 select 限制，加个保险）
+                         // 递归查找，同时将当前的目标实体加入祖先链
                          if (level < 10) { 
-                             const children = buildRecursive(nextEntity, currentPath, level + 1);
+                             const newAncestors = [...ancestors, targetTypeName];
+                             const children = buildRecursive(nextEntity, currentPath, level + 1, newAncestors);
                              result.push(...children);
                          }
                      }
@@ -196,7 +210,8 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
             return result;
         };
 
-        const items = buildRecursive(currentSchema, "", 0);
+        // 初始调用，祖先链包含当前根实体
+        const items = buildRecursive(currentSchema, "", 0, [currentSchema.name]);
 
         if (items.length === 0) {
             return [{ name: 'none', label: '无关联实体', type: 'placeholder', targetType: undefined, level: 0 }];
