@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Button, Chip, Tabs, Tab } from "@nextui-org/react";
+import { Button, Chip, Tabs, Tab, Checkbox } from "@nextui-org/react";
 import { 
     Table as TableIcon, Trash, Save, Braces, Download, Copy, FileCode, 
     ChevronUp, ChevronDown, GripVertical 
@@ -11,7 +11,8 @@ import {
     flexRender, 
     createColumnHelper,
     SortingState,
-    ColumnOrderState
+    ColumnOrderState,
+    RowSelectionState
 } from '@tanstack/react-table';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
@@ -38,8 +39,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     const editorTheme = isDark ? vscodeDark : githubLight;
     const tableContainerRef = useRef<HTMLDivElement>(null);
     
-    // 初始化宽度使用 Window 宽度做兜底，避免首次渲染时宽度为 0 导致列宽计算异常（不铺满）
-    // 减去 64px 作为大概的 Padding/Sidebar 预留
+    // 初始化宽度使用 Window 宽度做兜底
     const [containerWidth, setContainerWidth] = useState(() => {
         if (typeof window !== 'undefined') return Math.max(800, window.innerWidth - 64);
         return 1200;
@@ -48,15 +48,15 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     // --- Table State ---
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnOrder, setColumnOrder] = useState<ColumnOrderState>([]);
+    const [rowSelection, setRowSelection] = useState<RowSelectionState>({}); // 行选中状态
     const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 
-    // 监听容器宽度变化，用于动态计算列宽
+    // 监听容器宽度变化
     useEffect(() => {
         if (!tableContainerRef.current) return;
         
         const observer = new ResizeObserver(entries => {
             for (const entry of entries) {
-                // 只在宽度有效时更新，防止隐藏 Tab 导致宽度变 0
                 if (entry.contentRect.width > 0) {
                     setContainerWidth(entry.contentRect.width);
                 }
@@ -70,36 +70,78 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
     // --- Smart Column Width Algorithm ---
     const columnHelper = createColumnHelper<any>();
     
-    // 动态生成列定义，包含智能宽度计算
     const columns = useMemo(() => {
         if (queryResult.length === 0) return [];
         
-        // 过滤掉元数据，保留所有数据字段
-        const rawKeys = Object.keys(queryResult[0]).filter(key => key !== '__metadata');
-        if (rawKeys.length === 0) return [];
+        // 1. 定义固定列 (勾选列 + 行号列)
+        // 勾选列宽 40px, 行号列宽 50px (默认)
+        const FIXED_COLUMNS_WIDTH = 40 + 50;
 
-        // 1. 计算每一列的“内容基准宽度”
-        // 采样前 20 行数据
+        const selectColumn = columnHelper.display({
+            id: 'select',
+            header: ({ table }) => (
+                <div className="flex items-center justify-center w-full">
+                     <Checkbox
+                        size="sm"
+                        isIndeterminate={table.getIsSomeRowsSelected()}
+                        isSelected={table.getIsAllRowsSelected()}
+                        onValueChange={(val) => table.toggleAllRowsSelected(!!val)}
+                        aria-label="Select all"
+                        classNames={{ wrapper: "m-0" }}
+                    />
+                </div>
+            ),
+            cell: ({ row }) => (
+                <div className="flex items-center justify-center w-full">
+                    <Checkbox
+                        size="sm"
+                        isSelected={row.getIsSelected()}
+                        onValueChange={(val) => row.toggleSelected(!!val)}
+                        aria-label="Select row"
+                        classNames={{ wrapper: "m-0" }}
+                    />
+                </div>
+            ),
+            size: 40,
+            enableResizing: false, // 禁止调整大小
+            minSize: 40,
+            maxSize: 40,
+        });
+
+        const indexColumn = columnHelper.display({
+            id: 'index',
+            header: '#',
+            cell: (info) => (
+                <span className="text-default-400 font-mono text-xs w-full text-center block">
+                    {info.row.index + 1}
+                </span>
+            ),
+            size: 50,
+            enableResizing: true, // 允许调整大小
+            minSize: 40,
+            maxSize: 100,
+        });
+
+        // 2. 处理数据列
+        const rawKeys = Object.keys(queryResult[0]).filter(key => key !== '__metadata');
+        if (rawKeys.length === 0) return [selectColumn, indexColumn];
+
+        // 采样前 20 行计算内容宽度
         const sampleData = queryResult.slice(0, 20);
         const columnMeta: Record<string, number> = {};
         let totalBaseWidth = 0;
         
         rawKeys.forEach(key => {
-            // 表头权重 (表头通常有加粗、排序图标等，给予 1.3 倍字符权重)
             let maxWeightedLen = Math.max(key.length * 1.3, 4); 
             
             sampleData.forEach(row => {
                 const val = row[key];
                 if (val !== null && val !== undefined) {
                     const str = String(val);
-                    
-                    // 字符宽度估算
                     let len = 0;
                     for (let i = 0; i < str.length; i++) {
                         len += (str.charCodeAt(i) > 255) ? 1.6 : 1;
                     }
-
-                    // 长度权重衰减算法
                     let weightedLen = len;
                     if (len > 30) weightedLen = 30 + (len - 30) * 0.5;
                     if (weightedLen > 80) weightedLen = 80 + (weightedLen - 80) * 0.2;
@@ -109,55 +151,48 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                 }
             });
 
-            // 估算像素宽度: 
-            // 字符权重 * 8px (字体大小) + Padding (24px)
-            // 限制：最小 80px，最大 400px (作为基准权重，如果屏幕宽，会按比例放大)
             const basePx = Math.min(Math.max(Math.ceil(maxWeightedLen * 8) + 24, 80), 400);
-            
             columnMeta[key] = basePx;
             totalBaseWidth += basePx;
         });
 
-        // 2. 决定是否铺满屏幕 (Responsive Fill)
-        // 核心大前提：如果内容不足以撑满屏幕，优先按比例扩宽各个列，让表格铺满全屏。
-        const availableWidth = containerWidth > 0 ? containerWidth - 2 : 0;
-        const shouldScale = availableWidth > 0 && totalBaseWidth < availableWidth;
-        const scaleRatio = shouldScale ? (availableWidth / totalBaseWidth) : 1;
+        // 3. 决定铺满逻辑
+        // 可用宽度 = 容器宽度 - 边框缓冲 - 固定列的总宽度
+        const availableWidthForData = containerWidth > 0 ? (containerWidth - 2 - FIXED_COLUMNS_WIDTH) : 0;
+        
+        // 如果数据列总基准宽度 < 可用于数据的宽度，则放大比例
+        const shouldScale = availableWidthForData > 0 && totalBaseWidth < availableWidthForData;
+        const scaleRatio = shouldScale ? (availableWidthForData / totalBaseWidth) : 1;
 
-        // 4. 生成最终列定义 (Two-pass logic to handle rounding errors)
         let currentTotalWidth = 0;
 
-        return rawKeys.map((key, index) => {
-            // 计算最终宽度
+        const dataColumns = rawKeys.map((key, index) => {
             let finalWidth = Math.floor(columnMeta[key] * scaleRatio);
             
-            // 关键修正：如果是铺满模式，将剩余的像素（由于Math.floor丢失的）补给最后一列
+            // 补齐像素
             if (shouldScale && index === rawKeys.length - 1) {
-                const remaining = availableWidth - currentTotalWidth - finalWidth;
-                // 只有当剩余像素合理时才补（避免极端情况）
+                const remaining = availableWidthForData - currentTotalWidth - finalWidth;
                 if (remaining > 0 && remaining < 100) {
                     finalWidth += remaining;
                 }
             }
-            
             currentTotalWidth += finalWidth;
 
             return columnHelper.accessor(key, { 
                 id: key,
                 header: key, 
-                // 使用 ContentRenderer 渲染单元格内容
                 cell: info => <ContentRenderer value={info.getValue()} columnName={key} />,
-                // 设置计算出的宽度
                 size: finalWidth,
-                // 允许调整的最小宽度
                 minSize: 60,
-                // 允许的最大宽度设大一点，方便用户手动拖拽调整
                 maxSize: 5000,
             });
         });
-    }, [queryResult, containerWidth]); // 依赖 containerWidth 以便在窗口 resize 时重新计算填充
 
-    // 当列定义变化时，初始化列顺序
+        // 将固定列和数据列合并
+        return [selectColumn, indexColumn, ...dataColumns];
+    }, [queryResult, containerWidth]);
+
+    // 初始化列顺序
     useEffect(() => {
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
@@ -170,11 +205,14 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
         state: {
             sorting,
             columnOrder,
+            rowSelection,
         },
+        enableRowSelection: true, // 启用行选择
+        onRowSelectionChange: setRowSelection,
         onSortingChange: setSorting,
         onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
-        getSortedRowModel: getSortedRowModel(), // 启用客户端排序
+        getSortedRowModel: getSortedRowModel(),
         enableColumnResizing: true,
         columnResizeMode: 'onChange',
     });
@@ -201,6 +239,11 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                             <TableIcon size={14} />
                             <span>表格预览</span>
                             <Chip size="sm" variant="flat" className="h-4 text-[10px] px-1 ml-1">{queryResult.length}</Chip>
+                            {Object.keys(rowSelection).length > 0 && (
+                                <Chip size="sm" color="primary" variant="flat" className="h-4 text-[10px] px-1 ml-1">
+                                    选中 {Object.keys(rowSelection).length}
+                                </Chip>
+                            )}
                         </div>
                     }
                 >
@@ -213,10 +256,6 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                         </div>
 
                         <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
-                            {/* 
-                                使用 table-fixed 配合列宽调整 
-                                width 设置为 totalSize，当被拉伸时 totalSize ~= containerWidth，当未拉伸时 totalSize > containerWidth (出现滚动条)
-                            */}
                             <table 
                                 className="w-full text-left border-collapse table-fixed"
                                 style={{ width: table.getTotalSize() }}
@@ -229,9 +268,10 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                     key={header.id} 
                                                     className="relative p-2 py-3 text-xs font-bold text-default-600 select-none group border-r border-divider/10 hover:bg-default-100 transition-colors"
                                                     style={{ width: header.getSize() }}
-                                                    // --- 拖拽重排逻辑 ---
-                                                    draggable={!header.isPlaceholder}
+                                                    // --- 拖拽重排逻辑 (仅非固定列允许拖拽) ---
+                                                    draggable={!header.isPlaceholder && header.id !== 'select' && header.id !== 'index'}
                                                     onDragStart={(e) => {
+                                                        if (header.id === 'select' || header.id === 'index') return;
                                                         setDraggingColumn(header.column.id);
                                                         e.dataTransfer.effectAllowed = 'move';
                                                         e.currentTarget.style.opacity = '0.5';
@@ -243,7 +283,8 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                     onDragOver={(e) => e.preventDefault()}
                                                     onDrop={(e) => {
                                                         e.preventDefault();
-                                                        if (draggingColumn && draggingColumn !== header.column.id) {
+                                                        // 禁止将列拖拽到固定列之前，或拖拽固定列
+                                                        if (draggingColumn && draggingColumn !== header.column.id && header.id !== 'select' && header.id !== 'index') {
                                                             const newOrder = [...columnOrder];
                                                             const dragIndex = newOrder.indexOf(draggingColumn);
                                                             const dropIndex = newOrder.indexOf(header.column.id);
@@ -255,36 +296,48 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                         }
                                                     }}
                                                 >
-                                                    <div className="flex items-center gap-1 w-full overflow-hidden">
-                                                        {/* 拖拽手柄图标 */}
-                                                        <GripVertical 
-                                                            size={12} 
-                                                            className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0" 
-                                                        />
+                                                    <div className="flex items-center gap-1 w-full overflow-hidden justify-center">
+                                                        {/* 拖拽手柄图标 (仅非固定列显示) */}
+                                                        {header.id !== 'select' && header.id !== 'index' && (
+                                                            <GripVertical 
+                                                                size={12} 
+                                                                className="text-default-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute left-1" 
+                                                            />
+                                                        )}
                                                         
                                                         {/* 表头文本与排序点击区域 */}
-                                                        <div 
-                                                            className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden"
-                                                            onClick={header.column.getToggleSortingHandler()}
-                                                        >
-                                                            <span className="truncate" title={header.column.id}>
+                                                        {header.id === 'select' || header.id === 'index' ? (
+                                                            // 固定列直接渲染内容
+                                                            <div className="flex items-center justify-center w-full">
                                                                 {flexRender(header.column.columnDef.header, header.getContext())}
-                                                            </span>
-                                                            {{
-                                                                asc: <ChevronUp size={12} className="text-primary shrink-0" />,
-                                                                desc: <ChevronDown size={12} className="text-primary shrink-0" />,
-                                                            }[header.column.getIsSorted() as string] ?? null}
-                                                        </div>
+                                                            </div>
+                                                        ) : (
+                                                            // 数据列支持点击排序
+                                                            <div 
+                                                                className="flex items-center gap-1 cursor-pointer flex-1 overflow-hidden pl-4" // pl-4 为左侧手柄留空
+                                                                onClick={header.column.getToggleSortingHandler()}
+                                                            >
+                                                                <span className="truncate" title={header.column.id}>
+                                                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                                                </span>
+                                                                {{
+                                                                    asc: <ChevronUp size={12} className="text-primary shrink-0" />,
+                                                                    desc: <ChevronDown size={12} className="text-primary shrink-0" />,
+                                                                }[header.column.getIsSorted() as string] ?? null}
+                                                            </div>
+                                                        )}
                                                     </div>
 
-                                                    {/* --- 列宽调整手柄 --- */}
-                                                    <div
-                                                        onMouseDown={header.getResizeHandler()}
-                                                        onTouchStart={header.getResizeHandler()}
-                                                        className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 transition-colors z-10 ${
-                                                            header.column.getIsResizing() ? 'bg-primary w-1' : 'bg-transparent'
-                                                        }`}
-                                                    />
+                                                    {/* --- 列宽调整手柄 (仅允许调整大小的列显示) --- */}
+                                                    {header.column.getCanResize() && (
+                                                        <div
+                                                            onMouseDown={header.getResizeHandler()}
+                                                            onTouchStart={header.getResizeHandler()}
+                                                            className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none hover:bg-primary/50 transition-colors z-10 ${
+                                                                header.column.getIsResizing() ? 'bg-primary w-1' : 'bg-transparent'
+                                                            }`}
+                                                        />
+                                                    )}
                                                 </th>
                                             ))}
                                         </tr>
@@ -297,7 +350,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                             className={`
                                                 border-b border-divider/40 last:border-0 transition-colors
                                                 hover:bg-primary/5
-                                                ${idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/30'}
+                                                ${row.getIsSelected() ? 'bg-primary/10' : (idx % 2 === 0 ? 'bg-transparent' : 'bg-default-50/30')}
                                             `}
                                         >
                                             {row.getVisibleCells().map(cell => (
@@ -306,7 +359,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                                                     className="p-2 text-sm text-default-700 align-middle overflow-hidden border-r border-divider/10 last:border-0"
                                                     style={{ width: cell.column.getSize() }}
                                                 >
-                                                    {/* 内容渲染容器：确保 flex 布局以支持 full width */}
+                                                    {/* 内容渲染容器 */}
                                                     <div className="w-full">
                                                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                                     </div>
