@@ -197,11 +197,13 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
     };
 
     // --- Sort 字段逻辑 (拆分为升序/降序两个下拉框，互斥) ---
+    // 将 sortItems 加入依赖，确保当排序状态变化时，items 引用更新，强制 Select 组件重绘列表项，
+    // 从而实时更新 "已选升序/降序" 的提示文字。
     const sortOptions = useMemo(() => {
         if (!currentSchema) return [];
         const mainProps = currentSchema.properties.map(p => ({ ...p, label: p.name, isExpanded: false }));
         return [...mainProps, ...expandedEntityProperties];
-    }, [currentSchema, expandedEntityProperties]);
+    }, [currentSchema, expandedEntityProperties, sortItems]);
 
     // 计算当前的 Asc 和 Desc 集合
     const currentAscKeys = useMemo(() => new Set(sortItems.filter(i => i.order === 'asc').map(i => i.field)), [sortItems]);
