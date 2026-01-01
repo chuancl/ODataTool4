@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Select, SelectItem, Selection, Button, Tooltip } from "@nextui-org/react";
-import { ListFilter, Wand2 } from 'lucide-react';
+import { Select, SelectItem, Selection } from "@nextui-org/react";
 import { EntityType, ParsedSchema } from '@/utils/odata-helper';
 import { FilterBuilderModal } from './FilterBuilderModal';
 
@@ -121,44 +120,32 @@ export const ParamsForm: React.FC<ParamsFormProps> = ({
                     selectedKeys={selectedEntity ? [selectedEntity] : []}
                     onSelectionChange={onEntityChange}
                     variant="bordered"
-                    size="sm"
-                    items={entitySets.map(e => ({ key: e, label: e }))}
+                    // 移除 size="sm" 以使用默认高度 (通常也是 h-14 左右，与我们的 Toolbar 对齐)
+                    // 或者显式设置高度 class
+                    className="w-full"
                     classNames={{
-                        trigger: "min-h-10 border-default-200"
+                        trigger: "h-14 min-h-14 border-2 border-default-200 data-[hover=true]:border-default-400", // Force height to match toolbar
+                        label: "text-[10px] font-medium text-default-500",
+                        value: "text-small"
                     }}
+                    items={entitySets.map(e => ({ key: e, label: e }))}
                 >
                     {(item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>}
                 </Select>
 
-                {/* 2. 工具栏：过滤 (固定宽度) + 分页 (自然排列) */}
-                <div className="flex items-center gap-2">
-                    <Tooltip content={filter || "构建过滤器 ($filter)"} placement="bottom">
-                        <Button 
-                            color={filter ? "primary" : "default"} 
-                            variant="bordered"
-                            onPress={() => setIsFilterModalOpen(true)}
-                            isDisabled={!currentSchema}
-                            size="sm"
-                            startContent={filter ? <ListFilter size={16} /> : <Wand2 size={16} />}
-                            className={`h-10 px-3 min-w-0 border-default-200 ${filter ? "w-[120px]" : "w-[100px]"}`}
-                        >
-                            <span className="truncate text-xs">
-                                {filter ? "已过滤" : "过滤 Filter"}
-                            </span>
-                            {filter && (
-                                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary block" />
-                            )}
-                        </Button>
-                    </Tooltip>
-
-                    <div className="flex-1 flex justify-end">
-                        <PaginationControls 
-                            top={top} setTop={setTop}
-                            skip={skip} setSkip={setSkip}
-                            count={count} setCount={setCount}
-                        />
-                    </div>
-                </div>
+                {/* 2. 组合工具栏：过滤 + 分页 + 计数 */}
+                {/* 
+                    这个组件内部高度设置为 h-14 (56px)，与上面的 Select 对齐。
+                    边框样式也模拟了 Select variant="bordered"。
+                */}
+                <PaginationControls 
+                    filter={filter}
+                    onOpenFilter={() => setIsFilterModalOpen(true)}
+                    onClearFilter={() => setFilter('')}
+                    top={top} setTop={setTop}
+                    skip={skip} setSkip={setSkip}
+                    count={count} setCount={setCount}
+                />
             </div>
 
             {/* --- 右侧配置面板 (排序, 字段, 展开) [col-span-9] --- */}
