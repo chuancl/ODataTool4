@@ -199,6 +199,7 @@ export const useEntityActions = (
 
         const baseUrl = url.endsWith('/') ? url : `${url}/`;
         const results: string[] = [];
+        const errors: string[] = []; // Collect error messages for toast
         let successCount = 0;
         let failCount = 0;
 
@@ -210,6 +211,7 @@ export const useEntityActions = (
             
             if (!requestUrl) {
                 results.push(`SKIP: Unable to determine URL for item`);
+                errors.push(`Missing URL for item`);
                 failCount++;
                 continue;
             }
@@ -262,16 +264,26 @@ export const useEntityActions = (
                 } else {
                     const errText = await res.text();
                     let errDisplay = errText.substring(0, 300);
+                    let toastMsg = `HTTP ${res.status}`;
+                    
                     try {
                          // 尝试美化 JSON 错误
                          const jsonErr = JSON.parse(errText);
                          errDisplay = JSON.stringify(jsonErr, null, 2);
-                    } catch(e) {}
+                         // 提取 OData 错误信息
+                         toastMsg = jsonErr.error?.message?.value || jsonErr.error?.message || jsonErr["odata.error"]?.message?.value || JSON.stringify(jsonErr);
+                    } catch(e) {
+                         toastMsg = errText.substring(0, 200); // 纯文本错误截断
+                    }
+
                     results.push(`FAILED (${res.status}): ${requestUrl}\nResponse: ${errDisplay}`);
+                    errors.push(toastMsg);
                     failCount++;
                 }
             } catch (e: any) {
-                results.push(`ERROR: ${requestUrl} - ${e.message}`);
+                const msg = e.message || String(e);
+                results.push(`ERROR: ${requestUrl} - ${msg}`);
+                errors.push(msg);
                 failCount++;
             }
         }
@@ -281,10 +293,17 @@ export const useEntityActions = (
         // 汇总 Toast 提示
         if (failCount === 0) {
             toast.success(`批量操作成功: ${successCount} 项\n(Batch operation successful)`);
-        } else if (successCount === 0) {
-            toast.error(`批量操作全部失败: ${failCount} 项\n请查看 JSON 预览获取详细错误。\n(All operations failed. Check JSON preview for details)`);
         } else {
-            toast.warning(`批量操作部分完成: 成功 ${successCount}, 失败 ${failCount}\n(Partial success)`);
+            // 构建错误详情字符串 (最多显示3条，避免太长)
+            const errorDetails = errors.slice(0, 3).join('\n\n');
+            const suffix = errors.length > 3 ? `\n\n... (+${errors.length - 3} more errors)` : '';
+            const fullMsg = `${errorDetails}${suffix}`;
+
+            if (successCount === 0) {
+                toast.error(`操作全部失败 (${failCount} Failed):\n${fullMsg}`);
+            } else {
+                toast.warning(`部分成功 (${successCount}), 失败 (${failCount}):\n${fullMsg}`);
+            }
         }
 
         await refreshQuery(); 

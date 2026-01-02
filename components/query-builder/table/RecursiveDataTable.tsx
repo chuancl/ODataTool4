@@ -20,6 +20,7 @@ import { ExpandedRowView } from './ExpandedRowView';
 import { ParsedSchema } from '@/utils/odata-helper';
 import { TableHeader } from './TableHeader';
 import { useTableColumns } from './useTableColumns';
+import { useToast } from '@/components/ui/ToastContext';
 
 interface RecursiveDataTableProps {
     data: any[];
@@ -51,6 +52,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         if (typeof window !== 'undefined') return Math.max(600, window.innerWidth - 100);
         return 1000;
     });
+
+    // --- Toast ---
+    const toast = useToast();
 
     // --- Table State ---
     const [sorting, setSorting] = useState<SortingState>([]);
@@ -178,9 +182,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         if (updates.length === 0) {
              const hasDrafts = Object.keys(editDraft).length > 0;
              if (hasDrafts) {
-                 alert("检测到修改，但未选中对应行。请勾选修改过的行再点击更新。\n(Changes detected but rows not selected. Please select modified rows.)");
+                 toast.warning("检测到修改，但未选中对应行。\n请勾选修改过的行再点击更新。\n(Changes detected but rows not selected. Please select modified rows.)");
              } else {
-                 alert("未检测到任何实质性修改 (No changes detected)");
+                 toast.info("未检测到任何实质性修改 (No changes detected)");
              }
              return;
         }
