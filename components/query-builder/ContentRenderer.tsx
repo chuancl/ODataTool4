@@ -66,16 +66,41 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             if (value instanceof Date) return { type: 'date', content: value };
 
             // OData V2/V3 Media Resource / Named Stream (重要更新)
-            // 结构如: { __mediaresource: { media_src: "...", content_type: "..." } }
-            if (value.__mediaresource && value.__mediaresource.media_src) {
+            // 场景 A: 包装在 __mediaresource 属性中
+            // 结构如: { __mediaresource: { media_src: "...", edit_media: "...", content_type: "..." } }
+            if (value.__mediaresource && (value.__mediaresource.media_src || value.__mediaresource.edit_media)) {
                 const mr = value.__mediaresource;
-                const src = mr.media_src;
+                const src = mr.media_src || mr.edit_media;
                 const mime = mr.content_type || '';
                 
                 if (mime.startsWith('image/')) return { type: 'image', src, mode: 'stream_link', mime };
                 if (mime.startsWith('video/')) return { type: 'video', src, mode: 'stream_link', mime };
                 if (mime.startsWith('audio/')) return { type: 'audio', src, mode: 'stream_link', mime };
+                
+                // 启发式：如果列名或URL暗示是图片
+                if ((columnName && /photo|image|picture/i.test(columnName)) || /photo|image/i.test(src)) {
+                     return { type: 'image', src, mode: 'stream_link', mime: mime || 'image/*' };
+                }
+
                 return { type: 'file', src, mode: 'stream_link', mime };
+            }
+
+            // 场景 B: 对象本身即是 Media Resource (例如直接渲染 __mediaresource 列的内容)
+            // 结构如: { media_src: "...", edit_media: "...", content_type: "..." }
+            if (value.media_src || value.edit_media) {
+                 const src = value.media_src || value.edit_media;
+                 const mime = value.content_type || '';
+                 
+                 if (mime.startsWith('image/')) return { type: 'image', src, mode: 'stream_link', mime };
+                 if (mime.startsWith('video/')) return { type: 'video', src, mode: 'stream_link', mime };
+                 if (mime.startsWith('audio/')) return { type: 'audio', src, mode: 'stream_link', mime };
+                 
+                 // 启发式
+                 if ((columnName && /photo|image|picture/i.test(columnName)) || /photo|image/i.test(src)) {
+                     return { type: 'image', src, mode: 'stream_link', mime: mime || 'image/*' };
+                }
+
+                 return { type: 'file', src, mode: 'stream_link', mime };
             }
 
             // V2 格式: { results: [...] }
@@ -114,8 +139,20 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         }
 
         // 5. 判断 URL
-        const isUrl = /^(https?:\/\/.+|\/.+\.\w+)$/i.test(strVal);
+        // 支持常见的 HTTP/HTTPS URL 和 相对路径
+        const isUrl = /^(https?:\/\/.+|\/.+\.\w+|\/.+\/.*)$/i.test(strVal);
         if (isUrl) {
+            // A. Check specific column names for OData media keys (edit_media, media_src)
+            if (columnName && /edit_media|media_src/i.test(columnName)) {
+                // Heuristic: URL looks like image?
+                if (/photo|image|picture/i.test(strVal) || /photo|image|picture/i.test(columnName || '')) {
+                    return { type: 'image', src: strVal, mode: 'url' };
+                }
+                // Fallback to generic file (Downloadable)
+                return { type: 'file', src: strVal, mode: 'url', mime: 'application/octet-stream' };
+            }
+
+            // B. Check extensions
             const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
             if (ext && EXTENSIONS[ext]) {
                 return { ...EXTENSIONS[ext], src: strVal, mode: 'url' };
