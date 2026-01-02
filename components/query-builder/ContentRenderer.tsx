@@ -65,6 +65,19 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             // 排除 Date 对象 (虽然 OData V2 通常返回字符串，但防守一下)
             if (value instanceof Date) return { type: 'date', content: value };
 
+            // OData V2/V3 Media Resource / Named Stream (重要更新)
+            // 结构如: { __mediaresource: { media_src: "...", content_type: "..." } }
+            if (value.__mediaresource && value.__mediaresource.media_src) {
+                const mr = value.__mediaresource;
+                const src = mr.media_src;
+                const mime = mr.content_type || '';
+                
+                if (mime.startsWith('image/')) return { type: 'image', src, mode: 'stream_link', mime };
+                if (mime.startsWith('video/')) return { type: 'video', src, mode: 'stream_link', mime };
+                if (mime.startsWith('audio/')) return { type: 'audio', src, mode: 'stream_link', mime };
+                return { type: 'file', src, mode: 'stream_link', mime };
+            }
+
             // V2 格式: { results: [...] }
             if (Array.isArray(value.results)) {
                  return { type: 'array', count: value.results.length };
