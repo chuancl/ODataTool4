@@ -1,7 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Button, Checkbox, Tooltip, Input, Chip, Switch } from "@nextui-org/react";
 import { 
-    Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight, Key, Link2, Pencil, Check, X
+    ChevronUp, ChevronDown, GripVertical
 } from 'lucide-react';
 import { 
     useReactTable, 
@@ -9,17 +8,18 @@ import {
     getSortedRowModel,
     getExpandedRowModel,
     flexRender, 
-    createColumnHelper,
     SortingState,
     ColumnOrderState,
     RowSelectionState,
     ExpandedState
 } from '@tanstack/react-table';
-import { ContentRenderer } from '../ContentRenderer';
-import { isExpandableData } from './utils';
+
+import { isExpandableData, updateRecursiveSelection } from './utils';
 import { exportToExcel } from './excel-export';
 import { ExpandedRowView } from './ExpandedRowView';
 import { ParsedSchema } from '@/utils/odata-helper';
+import { TableHeader } from './TableHeader';
+import { useTableColumns } from './useTableColumns';
 
 interface RecursiveDataTableProps {
     data: any[];
@@ -33,116 +33,6 @@ interface RecursiveDataTableProps {
     entityName?: string;
     schema?: ParsedSchema | null;
 }
-
-// 辅助：日期格式转换
-const toInputDate = (val: any) => {
-    if (!val) return '';
-    const str = String(val);
-    // 2023-10-10T12:00:00.000Z -> 2023-10-10T12:00
-    if (str.length >= 16 && str.includes('T')) {
-        return str.substring(0, 16);
-    }
-    return str;
-};
-
-const fromInputDate = (val: string) => {
-    if (!val) return null;
-    // 补全秒数和时区 Z，使其符合常见 OData ISO 格式
-    if (val.length === 16) return `${val}:00Z`;
-    return val;
-};
-
-// 递归更新数据的选中状态
-const updateRecursiveSelection = (data: any, isSelected: boolean) => {
-    if (!data) return;
-    if (Array.isArray(data)) {
-        data.forEach(item => updateRecursiveSelection(item, isSelected));
-        return;
-    }
-    if (typeof data === 'object') {
-        data['__selected'] = isSelected;
-        Object.values(data).forEach(val => {
-            if (isExpandableData(val)) {
-                if (Array.isArray(val)) {
-                    updateRecursiveSelection(val, isSelected);
-                } else if ((val as any).results && Array.isArray((val as any).results)) {
-                    updateRecursiveSelection((val as any).results, isSelected);
-                } else {
-                     updateRecursiveSelection(val, isSelected);
-                }
-            }
-        });
-    }
-};
-
-// --- Cell Component (Defined outside to maintain stability) ---
-const EditableCell = ({ getValue, row, column, table }: any) => {
-    const initialValue = getValue();
-    // 从 table meta 中获取动态状态，避免列定义重新生成导致 input 失去焦点
-    const { editDraft, handleInputChange, isEditing, schemaProperties, pkSet } = table.options.meta as any;
-    
-    const isSelected = row.getIsSelected();
-    const columnId = column.id;
-    const isPK = pkSet.has(columnId);
-    const isExpandable = isExpandableData(initialValue);
-
-    // Schema Type Check
-    const propDef = schemaProperties?.[columnId];
-    const type = propDef?.type || 'Edm.String';
-    const isBoolean = type === 'Edm.Boolean';
-    const isDate = type === 'Edm.DateTime' || type === 'Edm.DateTimeOffset';
-
-    // 如果处于编辑模式且行被选中，且不是主键或复杂对象，则渲染编辑器
-    if (isEditing && isSelected && !isExpandable && !isPK) {
-        const currentDraft = editDraft[row.index]?.[columnId];
-        // 优先显示草稿值，否则显示初始值
-        const displayValue = currentDraft !== undefined ? currentDraft : (initialValue ?? '');
-
-        if (isBoolean) {
-            return (
-                <Switch 
-                    size="sm" 
-                    isSelected={displayValue === true || String(displayValue) === 'true'}
-                    onValueChange={(checked) => handleInputChange(row.index, columnId, checked)}
-                />
-            );
-        }
-
-        if (isDate) {
-            return (
-                <input
-                    type="datetime-local"
-                    className="w-full h-7 text-xs px-1 border border-default-300 rounded bg-transparent focus:border-primary outline-none"
-                    value={toInputDate(displayValue)}
-                    onChange={(e) => handleInputChange(row.index, columnId, fromInputDate(e.target.value))}
-                />
-            );
-        }
-
-        return (
-            <Input 
-                size="sm" 
-                variant="bordered"
-                value={String(displayValue)}
-                onValueChange={(val) => handleInputChange(row.index, columnId, val)}
-                classNames={{ input: "text-xs font-mono h-6", inputWrapper: "h-7 min-h-7 px-1" }}
-            />
-        );
-    }
-
-    // 默认显示模式
-    return (
-        <ContentRenderer 
-            value={initialValue} 
-            columnName={columnId} 
-            onExpand={
-                isExpandable
-                ? row.getToggleExpandedHandler() 
-                : undefined
-            }
-        />
-    );
-};
 
 export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({ 
     data, 
@@ -242,11 +132,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
     // --- Edit Handlers ---
     const handleStartEdit = () => {
-        const selectedCount = Object.keys(rowSelection).length;
-        if (selectedCount === 0) {
-            // alert("请先勾选需要修改的行 (Please select rows to modify first)");
-            // Allow editing even without pre-selection, we will auto-select on input
-        }
+        // const selectedCount = Object.keys(rowSelection).length;
         setIsEditing(true);
     };
 
@@ -312,172 +198,18 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         }
     };
 
-    // --- Smart Column Width Algorithm ---
-    const columnHelper = createColumnHelper<any>();
-    
-    // IMPORTANT: columns useMemo should NOT depend on 'editDraft' or 'isEditing'
-    // This ensures the DOM structure of cells (Inputs) is not destroyed on every keystroke.
-    const columns = useMemo(() => {
-        if (!data || data.length === 0) return [];
-        
-        const FIXED_WIDTH = 32 + 40 + 50;
-
-        // Expander Column
-        const expanderColumn = columnHelper.display({
-            id: 'expander',
-            header: () => null,
-            cell: ({ row }) => {
-                return row.getCanExpand() ? (
-                    <div className="flex items-center justify-center w-full">
-                        <button
-                            {...{
-                                onClick: row.getToggleExpandedHandler(),
-                                style: { cursor: 'pointer' },
-                            }}
-                            className="p-0.5 hover:bg-primary/10 text-default-400 hover:text-primary rounded transition-colors"
-                        >
-                            {row.getIsExpanded() ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                        </button>
-                    </div>
-                ) : null;
-            },
-            size: 32,
-            enableResizing: false,
-        });
-
-        // Select Column
-        const selectColumn = columnHelper.display({
-            id: 'select',
-            header: ({ table }) => (
-                <div className="flex items-center justify-center w-full">
-                     <Checkbox
-                        size="sm"
-                        isIndeterminate={!!table.getIsSomeRowsSelected()}
-                        isSelected={!!table.getIsAllRowsSelected()}
-                        onValueChange={(val) => {
-                            const isSelected = !!val;
-                            table.toggleAllRowsSelected(isSelected);
-                            updateRecursiveSelection(data, isSelected);
-                        }}
-                        aria-label="Select all"
-                        classNames={{ wrapper: "m-0" }}
-                    />
-                </div>
-            ),
-            cell: ({ row }) => (
-                <div className="flex items-center justify-center w-full">
-                    <Checkbox
-                        size="sm"
-                        isSelected={!!row.getIsSelected()}
-                        onValueChange={(val) => {
-                            const isSelected = !!val;
-                            row.toggleSelected(isSelected);
-                            updateRecursiveSelection(row.original, isSelected);
-                        }}
-                        aria-label="Select row"
-                        classNames={{ wrapper: "m-0" }}
-                    />
-                </div>
-            ),
-            size: 40,
-            enableResizing: false,
-            minSize: 40,
-            maxSize: 40,
-        });
-
-        const indexColumn = columnHelper.display({
-            id: 'index',
-            header: '#',
-            cell: (info) => (
-                <span className="text-default-400 font-mono text-xs w-full text-center block">
-                    {info.row.index + 1}
-                </span>
-            ),
-            size: 50,
-            enableResizing: true,
-            minSize: 40,
-            maxSize: 100,
-        });
-
-        const rawKeys = Object.keys(data[0]).filter(key => key !== '__metadata' && key !== '__selected');
-        if (rawKeys.length === 0) return [expanderColumn, selectColumn, indexColumn];
-
-        const sampleData = data.slice(0, 20);
-        const columnMeta: Record<string, number> = {};
-        let totalBaseWidth = 0;
-        
-        rawKeys.forEach(key => {
-            let maxWeightedLen = Math.max(key.length * 1.3, 4); 
-            sampleData.forEach(row => {
-                const val = row[key];
-                if (val !== null && val !== undefined) {
-                    const str = String(val);
-                    let len = 0;
-                    for (let i = 0; i < str.length; i++) len += (str.charCodeAt(i) > 255) ? 1.6 : 1;
-                    let weightedLen = len;
-                    if (len > 30) weightedLen = 30 + (len - 30) * 0.5;
-                    if (weightedLen > 80) weightedLen = 80 + (weightedLen - 80) * 0.2;
-                    if (weightedLen > 250) weightedLen = 250;
-                    if (weightedLen > maxWeightedLen) maxWeightedLen = weightedLen;
-                }
-            });
-            const basePx = Math.min(Math.max(Math.ceil(maxWeightedLen * 8) + 24, 80), 400);
-            columnMeta[key] = basePx;
-            totalBaseWidth += basePx;
-        });
-
-        const availableWidthForData = containerWidth > 0 ? (containerWidth - 2 - FIXED_WIDTH) : 0;
-        const shouldScale = availableWidthForData > 0 && totalBaseWidth < availableWidthForData;
-        const scaleRatio = shouldScale ? (availableWidthForData / totalBaseWidth) : 1;
-
-        let currentTotalWidth = 0;
-
-        const dataColumns = rawKeys.map((key, index) => {
-            let finalWidth = Math.floor(columnMeta[key] * scaleRatio);
-            if (shouldScale && index === rawKeys.length - 1) {
-                const remaining = availableWidthForData - currentTotalWidth - finalWidth;
-                if (remaining > 0 && remaining < 100) finalWidth += remaining;
-            }
-            currentTotalWidth += finalWidth;
-            
-            const isPK = pkSet.has(key);
-            const isFK = fkSet.has(key);
-            const fkTarget = fkInfoMap.get(key);
-
-            return columnHelper.accessor(row => row[key], { 
-                id: key,
-                header: () => (
-                    <div className="flex items-center gap-1.5">
-                        {isPK && (
-                            <Tooltip content="Primary Key">
-                                <Key size={12} className="text-warning-500 shrink-0 fill-warning-500/20" />
-                            </Tooltip>
-                        )}
-                        {isFK && (
-                            <Tooltip content={`Foreign Key -> ${fkTarget}`}>
-                                <Link2 size={12} className="text-secondary-500 shrink-0" />
-                            </Tooltip>
-                        )}
-                        <span className={isPK ? "font-bold text-foreground" : isFK ? "text-secondary-600 font-medium" : ""}>
-                            {key}
-                        </span>
-                    </div>
-                ),
-                // Use the stable component here
-                cell: EditableCell, 
-                size: finalWidth,
-                minSize: 60,
-                maxSize: 5000,
-            });
-        });
-
-        return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
-    }, [data, containerWidth, pkSet, fkSet, fkInfoMap]); // Dependencies reduced!
+    // --- Columns Definition (Use Hook) ---
+    const columns = useTableColumns({
+        data,
+        containerWidth,
+        pkSet,
+        fkSet,
+        fkInfoMap
+    });
 
     // Sync column order
     useEffect(() => {
         if (columns.length > 0) {
-            const validIds = new Set(columns.map(c => c.id));
             setColumnOrder(prev => {
                  const newOrder = columns.map(c => c.id as string);
                  return newOrder;
@@ -536,45 +268,17 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
     return (
         <div className="h-full flex flex-col bg-content1 overflow-hidden">
-            <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-between shrink-0 h-12">
-                 <div className="flex items-center gap-2">
-                    {/* Header Left Content */}
-                    {isEditing && (
-                        <Chip size="sm" color="warning" variant="flat" className="animate-pulse">编辑模式 (Editing)</Chip>
-                    )}
-                 </div>
-                 
-                 <div className="flex gap-2">
-                    {/* 1. Modify Button */}
-                    {!isEditing && (
-                        <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
-                            修改 (Modify)
-                        </Button>
-                    )}
-
-                    {/* 2. Update/Cancel Buttons */}
-                    {isEditing && (
-                        <>
-                            <Button size="sm" color="success" variant="solid" className="text-white" onPress={handleConfirmUpdate} startContent={<Check size={14} />}>
-                                更新 (Update)
-                            </Button>
-                            <Button size="sm" color="default" variant="flat" onPress={handleCancelEdit} startContent={<X size={14} />}>
-                                取消 (Cancel)
-                            </Button>
-                        </>
-                    )}
-                    
-                    {/* 3. Delete Button */}
-                    <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>
-                        删除 (Delete)
-                    </Button>
-
-                    {/* 4. Export Button */}
-                    <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>
-                        导出 Excel
-                    </Button>
-                </div>
-            </div>
+            <TableHeader 
+                isEditing={isEditing}
+                onStartEdit={handleStartEdit}
+                onCancelEdit={handleCancelEdit}
+                onConfirmUpdate={handleConfirmUpdate}
+                onDelete={handleDeleteClick}
+                onExport={handleExport}
+                showModify={!!onUpdate}
+                showDelete={!!onDelete}
+                showExport={isRoot}
+            />
 
             <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
                 <table 
