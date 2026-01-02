@@ -81,17 +81,11 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
 
             if (mr) {
                 // Extract Source URL
-                let src = mr.media_src || mr.edit_media || mr.uri || mr.mediaReadLink || mr.readLink;
+                const src = mr.media_src || mr.edit_media || mr.uri || mr.mediaReadLink || mr.readLink;
                 // Extract Mime Type
                 const mime = mr.content_type || mr.contentType || mr.ContentType || ''; 
 
                 if (src && typeof src === 'string') {
-                    // --- 关键修复: 自动追加 /$value ---
-                    // 如果 URL 没有扩展名且不以 /$value 结尾，通常 OData 需要 /$value 才能获取 Raw Binary
-                    if (!src.endsWith('/$value') && !/\.\w{3,4}$/.test(src) && !src.startsWith('data:')) {
-                        src = `${src}/$value`;
-                    }
-
                     // Check if it's an image
                     const isImageMime = mime.toLowerCase().startsWith('image/');
                     const isVideoMime = mime.toLowerCase().startsWith('video/');
@@ -148,15 +142,10 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         // 5. 判断 URL
         const isUrl = /^(https?:\/\/.+|\/.+\.\w+|\/.+\/.*)$/i.test(strVal);
         if (isUrl) {
-            let src = strVal;
+            const src = strVal;
 
             // A. 基于列名判断 (Edit Media, Src 等)
             if (columnName && /edit_media|media_src/i.test(columnName)) {
-                // 同样应用 /$value 修复逻辑
-                if (!src.endsWith('/$value') && !/\.\w{3,4}$/.test(src)) {
-                    src = `${src}/$value`;
-                }
-
                 if (/photo|image|picture/i.test(src) || /photo|image|picture/i.test(columnName || '')) {
                     return { type: 'image', src, mode: 'url' };
                 }
@@ -170,10 +159,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             }
             // C. 宽松判断：如果列名是 Photo，且值是 URL，就当作图片
             if (columnName && /photo|image|picture/i.test(columnName)) {
-                 // 启发式：如果看起来像 OData URL，追加 $value
-                 if (!src.endsWith('/$value') && !/\.\w{3,4}$/.test(src)) {
-                    src = `${src}/$value`;
-                 }
                  return { type: 'image', src, mode: 'url_heuristic' };
             }
             
@@ -214,11 +199,11 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         if (detected.type === 'image') {
             setPreviewContent(
                 <div className="flex flex-col gap-2 items-center">
-                    <Image 
+                    {/* Preview Modal: Use standard img for max compatibility */}
+                    <img 
                         src={detected.src} 
                         alt="Preview" 
-                        className="max-w-full max-h-[80vh] object-contain"
-                        disableSkeleton
+                        className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-sm bg-default-100/50"
                     />
                      <div className="flex gap-2 mt-2">
                         <Button size="sm" as={Link} href={detected.src} isExternal startContent={<ExternalLink size={14}/>}>
@@ -340,12 +325,15 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         return (
             <div className="flex items-center gap-2 group">
                 <div className="relative w-10 h-10 rounded border border-divider bg-content2 overflow-hidden shrink-0 cursor-pointer" onClick={handlePreview}>
-                    <Image 
+                    {/* 使用原生 img 标签以获得最佳兼容性，尤其是对于无扩展名的流或 BMP 格式 */}
+                    <img 
                         src={detected.src} 
                         alt="img" 
-                        classNames={{ wrapper: "w-full h-full", img: "w-full h-full object-cover" }}
-                        fallbackSrc="https://via.placeholder.com/40?text=ERR"
-                        disableSkeleton
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            // 可以在这里添加一个 fallback icon 的显示逻辑，但这里简单隐藏
+                        }}
                     />
                     <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                         <Eye size={16} className="text-white" />
