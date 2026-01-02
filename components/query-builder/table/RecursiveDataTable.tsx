@@ -467,14 +467,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                  </div>
                  
                  <div className="flex gap-2">
-                    {/* Explicit check for onUpdate function presence */}
-                    {!!onUpdate && !isEditing && (
-                         <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
-                             修改 (Modify)
-                         </Button>
-                    )}
-
-                    {isEditing && (
+                    {/* --- Editing Actions --- */}
+                    {isEditing ? (
                         <>
                             <Button size="sm" color="success" variant="solid" className="text-white" onPress={handleConfirmUpdate} startContent={<Check size={14} />}>
                                 更新 (Update)
@@ -483,12 +477,26 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                 取消 (Cancel)
                             </Button>
                         </>
-                    )}
-                    
-                    {!isEditing && (
+                    ) : (
                         <>
-                            {!!onDelete && <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
-                            {isRoot && <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>导出 Excel</Button>}
+                            {/* Standard Actions */}
+                            {onUpdate && (
+                                <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
+                                    修改 (Modify)
+                                </Button>
+                            )}
+
+                            {!!onDelete && (
+                                <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>
+                                    删除 (Delete)
+                                </Button>
+                            )}
+
+                            {isRoot && (
+                                <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>
+                                    导出 Excel
+                                </Button>
+                            )}
                         </>
                     )}
                 </div>
