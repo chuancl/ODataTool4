@@ -2,13 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { Image, Chip, Link, Button, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
 import { 
     FileImage, FileVideo, FileAudio, FileText, FileArchive, FileCode, 
-    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar 
+    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar, ExternalLink 
 } from 'lucide-react';
 
 interface ContentRendererProps {
     value: any;
     columnName?: string;
-    onExpand?: () => void; // 新增：用于触发外部展开逻辑
+    onExpand?: () => void;
 }
 
 // 常见文件头魔数 (Base64前缀)
@@ -56,58 +56,60 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         
         // 1. 处理数组 (OData 一对多关系)
         if (Array.isArray(value)) {
-            // V2: { results: [...] } sometimes unwrapped, but here it's already an array
             return { type: 'array', count: value.length };
         }
 
         // 2. 处理对象 (OData 一对一关系 或 V2 Collection)
         if (typeof value === 'object') {
-            // 排除 Date 对象 (虽然 OData V2 通常返回字符串，但防守一下)
             if (value instanceof Date) return { type: 'date', content: value };
 
-            // OData V2/V3 Media Resource / Named Stream (重要更新)
-            // 场景 A: 包装在 __mediaresource 属性中
-            // 结构如: { __mediaresource: { media_src: "...", edit_media: "...", content_type: "..." } }
-            if (value.__mediaresource && (value.__mediaresource.media_src || value.__mediaresource.edit_media)) {
-                const mr = value.__mediaresource;
-                const src = mr.media_src || mr.edit_media;
-                const mime = mr.content_type || '';
-                
-                if (mime.startsWith('image/')) return { type: 'image', src, mode: 'stream_link', mime };
-                if (mime.startsWith('video/')) return { type: 'video', src, mode: 'stream_link', mime };
-                if (mime.startsWith('audio/')) return { type: 'audio', src, mode: 'stream_link', mime };
-                
-                // 启发式：如果列名或URL暗示是图片
-                if ((columnName && /photo|image|picture/i.test(columnName)) || /photo|image/i.test(src)) {
-                     return { type: 'image', src, mode: 'stream_link', mime: mime || 'image/*' };
-                }
+            // --- OData Media Resource Detection (Robust) ---
+            let mr: any = null;
 
-                return { type: 'file', src, mode: 'stream_link', mime };
+            // Strategy 1: Standard __mediaresource property
+            if (value.__mediaresource) mr = value.__mediaresource;
+            // Strategy 2: Wrapped in d (rare for properties but possible)
+            else if (value.d && value.d.__mediaresource) mr = value.d.__mediaresource;
+            // Strategy 3: Object IS the media resource (contains standard media keys)
+            else if (value.edit_media || value.media_src || value.uri || value.mediaReadLink) mr = value;
+            // Strategy 4: Fuzzy Search for mediaresource key (ignore case and underscores)
+            else {
+                const keys = Object.keys(value);
+                const mediaKey = keys.find(k => k.toLowerCase().includes('mediaresource'));
+                if (mediaKey) mr = value[mediaKey];
             }
 
-            // 场景 B: 对象本身即是 Media Resource (例如直接渲染 __mediaresource 列的内容)
-            // 结构如: { media_src: "...", edit_media: "...", content_type: "..." }
-            if (value.media_src || value.edit_media) {
-                 const src = value.media_src || value.edit_media;
-                 const mime = value.content_type || '';
-                 
-                 if (mime.startsWith('image/')) return { type: 'image', src, mode: 'stream_link', mime };
-                 if (mime.startsWith('video/')) return { type: 'video', src, mode: 'stream_link', mime };
-                 if (mime.startsWith('audio/')) return { type: 'audio', src, mode: 'stream_link', mime };
-                 
-                 // 启发式
-                 if ((columnName && /photo|image|picture/i.test(columnName)) || /photo|image/i.test(src)) {
-                     return { type: 'image', src, mode: 'stream_link', mime: mime || 'image/*' };
-                }
+            if (mr) {
+                // Extract Source URL
+                const src = mr.media_src || mr.edit_media || mr.uri || mr.mediaReadLink || mr.readLink;
+                // Extract Mime Type
+                const mime = mr.content_type || mr.contentType || mr.ContentType || ''; 
 
-                 return { type: 'file', src, mode: 'stream_link', mime };
+                if (src && typeof src === 'string') {
+                    // Check if it's an image
+                    const isImageMime = mime.toLowerCase().startsWith('image/');
+                    const isVideoMime = mime.toLowerCase().startsWith('video/');
+                    const isAudioMime = mime.toLowerCase().startsWith('audio/');
+                    
+                    const isImageCol = (columnName && /photo|image|picture|icon|avatar|logo/i.test(columnName));
+                    const isImageSrc = /photo|image|picture|\.jpg|\.png|\.gif/i.test(src);
+
+                    if (isImageMime || isImageCol || isImageSrc) {
+                         return { type: 'image', src, mode: 'stream_link', mime: mime || 'image/*' };
+                    }
+                    if (isVideoMime) return { type: 'video', src, mode: 'stream_link', mime };
+                    if (isAudioMime) return { type: 'audio', src, mode: 'stream_link', mime };
+
+                    // Default to file
+                    return { type: 'file', src, mode: 'stream_link', mime: mime || 'application/octet-stream' };
+                }
             }
 
             // V2 格式: { results: [...] }
             if (Array.isArray(value.results)) {
                  return { type: 'array', count: value.results.length };
             }
-            // Metadata
+            // Metadata (纯 Metadata 对象不显示详情)
             if (value.__metadata && Object.keys(value).length === 1) {
                 return { type: 'meta' };
             }
@@ -122,7 +124,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         const strVal = String(value).trim();
 
         // 3. 增强检测：日期时间 (ISO 8601)
-        // Regex for ISO 8601-like strings (e.g. 2026-01-02T05:07:48Z, /Date(123456)/)
         if (
             /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(strVal) || 
             /^\/Date\(\d+\)\/$/.test(strVal)
@@ -130,7 +131,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             return { type: 'date', content: strVal };
         }
 
-        // 4. 判断 Data URI (e.g. data:image/png;base64,...)
+        // 4. 判断 Data URI
         if (strVal.startsWith('data:')) {
             if (strVal.startsWith('data:image/')) return { type: 'image', src: strVal, mode: 'data_uri' };
             if (strVal.startsWith('data:video/')) return { type: 'video', src: strVal, mode: 'data_uri' };
@@ -139,32 +140,32 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         }
 
         // 5. 判断 URL
-        // 支持常见的 HTTP/HTTPS URL 和 相对路径
         const isUrl = /^(https?:\/\/.+|\/.+\.\w+|\/.+\/.*)$/i.test(strVal);
         if (isUrl) {
-            // A. Check specific column names for OData media keys (edit_media, media_src)
+            // A. 基于列名判断 (Edit Media, Src 等)
             if (columnName && /edit_media|media_src/i.test(columnName)) {
-                // Heuristic: URL looks like image?
                 if (/photo|image|picture/i.test(strVal) || /photo|image|picture/i.test(columnName || '')) {
                     return { type: 'image', src: strVal, mode: 'url' };
                 }
-                // Fallback to generic file (Downloadable)
                 return { type: 'file', src: strVal, mode: 'url', mime: 'application/octet-stream' };
             }
 
-            // B. Check extensions
+            // B. 基于扩展名判断
             const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
             if (ext && EXTENSIONS[ext]) {
                 return { ...EXTENSIONS[ext], src: strVal, mode: 'url' };
             }
+            // C. 宽松判断：如果列名是 Photo，且值是 URL，就当作图片
+            if (columnName && /photo|image|picture/i.test(columnName)) {
+                 return { type: 'image', src: strVal, mode: 'url_heuristic' };
+            }
+            
             if (strVal.match(/\.(img|pic|photo)/i)) return { type: 'image', src: strVal, mode: 'url' };
         }
 
         // 6. 判断 Base64
         const isBase64Like = strVal.length > 20 && /^[A-Za-z0-9+/]*={0,2}$/.test(strVal.replace(/\s/g, ''));
-        
         if (isBase64Like) {
-            // A. 检查标准文件头 (Magic Numbers)
             for (const [magic, mime] of Object.entries(MAGIC_NUMBERS)) {
                 if (strVal.startsWith(magic)) {
                     if (mime.startsWith('image/')) {
@@ -175,28 +176,20 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                     }
                 }
             }
-
-            // B. 特殊处理：OLE Wrapped BMP
+            // OLE Wrapped BMP
             if (strVal.length > 104) {
                 const oleSlice = strVal.substring(104, 120);
                 if (oleSlice.startsWith('Qk')) {
-                    return { 
-                        type: 'image', 
-                        src: `data:image/bmp;base64,${strVal.substring(104)}`, 
-                        mode: 'base64_ole', 
-                        mime: 'image/bmp' 
-                    };
+                    return { type: 'image', src: `data:image/bmp;base64,${strVal.substring(104)}`, mode: 'base64_ole', mime: 'image/bmp' };
                 }
             }
-
-            // C. 启发式回退 (基于列名)
+            // Fallback
             if (columnName && /image|photo|picture|icon|logo/i.test(columnName)) {
                  const fallbackMime = /picture|bmp/i.test(columnName) ? 'image/bmp' : 'image/png';
                  return { type: 'image', src: `data:${fallbackMime};base64,${strVal}`, mode: 'base64_fallback', mime: fallbackMime };
             }
         }
 
-        // 7. 普通文本
         return { type: 'text', content: strVal };
     }, [value, columnName]);
 
@@ -210,8 +203,13 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                         className="max-w-full max-h-[80vh] object-contain"
                         disableSkeleton
                     />
-                    <div className="text-tiny text-default-400 font-mono">
-                        {detected.mime || 'unknown mime'} | {detected.mode}
+                     <div className="flex gap-2 mt-2">
+                        <Button size="sm" as={Link} href={detected.src} isExternal startContent={<ExternalLink size={14}/>}>
+                            Open in New Tab
+                        </Button>
+                        <div className="text-tiny text-default-400 font-mono flex items-center">
+                            {detected.mime || 'unknown mime'} | {detected.mode}
+                        </div>
                     </div>
                 </div>
             );
@@ -246,7 +244,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 startContent={<Table2 size={12}/>}
                 classNames={{ base: "h-5 text-[10px] px-1", content: "font-mono" }}
                 onClick={(e) => {
-                    // 如果传入了 onExpand，优先执行展开逻辑
                     if (onExpand) {
                         e.stopPropagation();
                         onExpand();
@@ -295,10 +292,8 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
     // --- Date Formatting ---
     if (detected.type === 'date') {
         const dateStr = String(detected.content);
-        // 尝试格式化
         let display = dateStr;
         try {
-            // 处理 /Date(123456)/ 格式
             let dateObj: Date | null = null;
             if (dateStr.startsWith('/Date(')) {
                 const ms = parseInt(dateStr.match(/\/Date\((\d+)\)\//)?.[1] || '0');
@@ -308,7 +303,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             }
             
             if (!isNaN(dateObj.getTime())) {
-                display = dateObj.toLocaleString(); // Use local format
+                display = dateObj.toLocaleString(); 
             }
         } catch(e) {}
 
