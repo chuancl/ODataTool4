@@ -89,9 +89,10 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     }, []);
 
     // --- Schema Analysis ---
-    const { pkSet, fkSet, fkInfoMap, schemaProperties } = useMemo(() => {
+    const { pkSet, fkSet, fkInfoMap, schemaProperties, navPropSet } = useMemo(() => {
         const pkSet = new Set<string>();
         const fkSet = new Set<string>();
+        const navPropSet = new Set<string>();
         const fkInfoMap = new Map<string, string>(); 
         const schemaProperties: Record<string, any> = {};
 
@@ -115,6 +116,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                     schemaProperties[p.name] = p;
                 });
                 entityType.navigationProperties.forEach(nav => {
+                    navPropSet.add(nav.name);
                     if (nav.constraints) {
                         nav.constraints.forEach(c => {
                             fkSet.add(c.sourceProperty);
@@ -127,7 +129,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 });
             }
         }
-        return { pkSet, fkSet, fkInfoMap, schemaProperties };
+        return { pkSet, fkSet, fkInfoMap, schemaProperties, navPropSet };
     }, [schema, entityName]);
 
     // --- Edit Handlers ---
@@ -210,7 +212,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         containerWidth,
         pkSet,
         fkSet,
-        fkInfoMap
+        fkInfoMap,
+        navPropSet
     });
 
     // Sync column order
