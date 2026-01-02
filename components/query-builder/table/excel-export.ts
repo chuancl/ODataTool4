@@ -35,7 +35,7 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
 
     const wb = XLSX.utils.book_new();
     
-    // 全局 ID 计数器，用于生成关联 ID
+    // 全局 ID 计数器，用于生成关联 ID (虽然不导出，但内部逻辑需要用它来分组子项)
     let globalIdCounter = 1;
 
     // --- 数据聚合映射 ---
@@ -76,13 +76,13 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
         // 遍历当前批次的数据行
         data.forEach((row, idx) => {
             const flatRow: any = {};
-            const myId = globalIdCounter++; // 为当前行分配唯一 ID
+            const myId = globalIdCounter++; // 为当前行分配唯一 ID，用于内部子项关联，但不写入 Excel
             
-            // 写入系统字段
-            flatRow['__Export_ID'] = myId;
-            if (parentIds[idx] !== null) {
-                flatRow['__Parent_ID'] = parentIds[idx];
-            }
+            // [已修改] 不再写入系统字段 (__Export_ID, __Parent_ID) 以保持 Excel 纯净
+            // flatRow['__Export_ID'] = myId;
+            // if (parentIds[idx] !== null) {
+            //     flatRow['__Parent_ID'] = parentIds[idx];
+            // }
 
             // 遍历属性
             Object.entries(row).forEach(([key, val]) => {
