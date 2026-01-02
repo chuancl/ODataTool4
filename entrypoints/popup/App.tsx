@@ -4,12 +4,15 @@ import { NextUIProvider, Button, Input, Switch, Card, CardBody, Divider, ScrollS
 import { getSettings, saveSettings, AppSettings } from '@/utils/storage';
 import { Settings, ExternalLink, Plus, Trash2, Globe } from 'lucide-react';
 import { browser } from 'wxt/browser';
+import { ToastProvider, useToast } from '@/components/ui/ToastContext';
 import '../../assets/main.css';
 
-const App: React.FC = () => {
+// 内部组件使用 Toast
+const PopupContent: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [newUrl, setNewUrl] = useState('');
   const [manualInput, setManualInput] = useState('');
+  const toast = useToast();
 
   useEffect(() => {
     getSettings().then(setSettings);
@@ -20,14 +23,19 @@ const App: React.FC = () => {
     const newSettings = { ...settings, autoDetect: val };
     setSettings(newSettings);
     saveSettings(newSettings);
+    toast.info(`Auto-Detect ${val ? 'Enabled' : 'Disabled'}`);
   };
 
   const addToWhitelist = () => {
-    if (!settings || !newUrl) return;
+    if (!settings || !newUrl) {
+        if (!newUrl) toast.warning("Please enter a domain");
+        return;
+    }
     const newSettings = { ...settings, whitelist: [...settings.whitelist, newUrl] };
     setSettings(newSettings);
     saveSettings(newSettings);
     setNewUrl('');
+    toast.success("Domain added to whitelist");
   };
 
   const removeFromWhitelist = (url: string) => {
@@ -35,6 +43,7 @@ const App: React.FC = () => {
     const newSettings = { ...settings, whitelist: settings.whitelist.filter(u => u !== url) };
     setSettings(newSettings);
     saveSettings(newSettings);
+    toast.info("Domain removed");
   };
 
   const openDashboard = (url?: string) => {
@@ -53,7 +62,6 @@ const App: React.FC = () => {
   if (!settings) return <div className="p-4">Loading...</div>;
 
   return (
-    <NextUIProvider>
       <div className="w-[360px] bg-background text-foreground flex flex-col h-fit max-h-[600px] border border-divider">
         {/* Header */}
         <header className="px-4 py-3 border-b border-divider flex items-center justify-between bg-content1">
@@ -141,8 +149,17 @@ const App: React.FC = () => {
           OData Master DevTools v1.0
         </footer>
       </div>
-    </NextUIProvider>
   );
+};
+
+const App: React.FC = () => {
+    return (
+        <NextUIProvider>
+            <ToastProvider>
+                <PopupContent />
+            </ToastProvider>
+        </NextUIProvider>
+    );
 };
 
 const root = ReactDOM.createRoot(document.getElementById('root')!);

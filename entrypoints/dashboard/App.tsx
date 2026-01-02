@@ -6,15 +6,19 @@ import ODataERDiagram from '@/components/ODataERDiagram';
 import QueryBuilder from '@/components/QueryBuilder';
 import MockDataGenerator from '@/components/MockDataGenerator';
 import { Moon, Sun, Search, RotateCw } from 'lucide-react';
+import { ToastProvider, useToast } from '@/components/ui/ToastContext'; // Import Toast
 // 使用相对路径引入样式
 import '../../assets/main.css';
 
-const App: React.FC = () => {
+// 内部组件，以便使用 useToast
+const DashboardContent: React.FC = () => {
   const [isDark, setIsDark] = useState(true);
   const [url, setUrl] = useState('');
   const [odataVersion, setOdataVersion] = useState<ODataVersion>('Unknown');
   const [isValidating, setIsValidating] = useState(false);
   const [schema, setSchema] = useState<ParsedSchema | null>(null);
+  
+  const toast = useToast(); // 使用 Toast Hook
 
   useEffect(() => {
     // 从 Hash 读取 URL
@@ -36,7 +40,10 @@ const App: React.FC = () => {
   }, [isDark]);
 
   const validateAndLoad = async (targetUrl: string) => {
-    if (!targetUrl) return;
+    if (!targetUrl) {
+        toast.warning("请输入有效的 URL (Please enter a valid URL)");
+        return;
+    }
     setIsValidating(true);
     setSchema(null); // Reset schema during load
 
@@ -44,22 +51,29 @@ const App: React.FC = () => {
         // 1. 统一获取 Metadata XML
         const metadataUrl = targetUrl.endsWith('$metadata') ? targetUrl : `${targetUrl.replace(/\/$/, '')}/$metadata`;
         const res = await fetch(metadataUrl);
-        if (!res.ok) throw new Error("Fetch failed");
+        if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
         
         const xmlText = await res.text();
         
         // 2. 统一检测版本 (基于 XML 内容)
         const ver = await detectODataVersion(xmlText, true);
         setOdataVersion(ver);
+        
+        if (ver === 'Unknown') {
+             toast.warning("无法识别 OData 版本，可能不是标准的 OData 服务。\n(OData version not detected)");
+        } else {
+             toast.success(`成功加载 OData ${ver} 服务！\n(Loaded OData ${ver} Service successfully)`);
+        }
 
         // 3. 统一解析 Schema
         const parsedSchema = parseMetadataToSchema(xmlText);
         setSchema(parsedSchema);
 
-    } catch (e) {
+    } catch (e: any) {
         console.error("Failed to load OData service:", e);
         setOdataVersion('Unknown');
         setSchema(null);
+        toast.error(`加载服务失败 (Failed to load service):\n${e.message || e}`);
     } finally {
         setIsValidating(false);
     }
@@ -68,7 +82,6 @@ const App: React.FC = () => {
   const handleUrlChange = (val: string) => setUrl(val);
 
   return (
-    <NextUIProvider>
       <div className="text-foreground bg-background h-screen w-screen flex flex-col overflow-hidden font-sans antialiased">
         
         {/* 顶部导航栏 */}
@@ -160,9 +173,18 @@ const App: React.FC = () => {
           )}
         </main>
       </div>
-    </NextUIProvider>
   );
 };
+
+const App: React.FC = () => {
+    return (
+        <NextUIProvider>
+            <ToastProvider>
+                <DashboardContent />
+            </ToastProvider>
+        </NextUIProvider>
+    )
+}
 
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 root.render(<React.StrictMode><App /></React.StrictMode>);

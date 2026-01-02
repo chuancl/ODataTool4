@@ -1,12 +1,16 @@
 import { useState, useCallback } from 'react';
 import xmlFormat from 'xml-formatter';
 import { ODataVersion } from '@/utils/odata-helper';
+import { useToast } from '@/components/ui/ToastContext';
 
 export const useODataQuery = (version: ODataVersion) => {
     const [loading, setLoading] = useState(false);
     const [queryResult, setQueryResult] = useState<any[]>([]); 
     const [rawJsonResult, setRawJsonResult] = useState('');    
     const [rawXmlResult, setRawXmlResult] = useState('');
+    
+    // 集成 Toast
+    const toast = useToast();
 
     const executeQuery = useCallback(async (generatedUrl: string) => {
         setLoading(true);
@@ -18,7 +22,6 @@ export const useODataQuery = (version: ODataVersion) => {
             const fetchUrl = generatedUrl;
 
             // --- 构建查询 Headers ---
-            // 必须与 Update/Delete 保持一致，以确保上下文一致性 (如 V3 verbose)
             const headers: Record<string, string> = {};
 
             if (version === 'V4') {
@@ -26,7 +29,6 @@ export const useODataQuery = (version: ODataVersion) => {
                 headers['OData-Version'] = '4.0';
                 headers['OData-MaxVersion'] = '4.0';
             } else if (version === 'V3') {
-                // V3: 必须显式要求 verbose 才能拿到 __metadata
                 headers['Accept'] = 'application/json;odata=verbose';
                 headers['DataServiceVersion'] = '3.0';
                 headers['MaxDataServiceVersion'] = '3.0';
@@ -42,7 +44,6 @@ export const useODataQuery = (version: ODataVersion) => {
                     headers: headers,
                     cache: 'no-store' 
                 }),
-                // XML 请求保持标准头
                 fetch(fetchUrl, { 
                     headers: { 'Accept': 'application/xml, application/atom+xml' },
                     cache: 'no-store'
@@ -61,8 +62,15 @@ export const useODataQuery = (version: ODataVersion) => {
                         const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
                         setQueryResult(results);
                         setRawJsonResult(JSON.stringify(data, null, 2));
+                        
+                        // 成功提示 (可选，过于频繁可能打扰用户，这里仅在数据为空时提示)
+                        if (results.length === 0) {
+                            toast.info("查询成功，但返回结果为空 (Query returned no data)");
+                        }
                     } catch (e) {
-                        setRawJsonResult(`// JSON 解析失败: \n${text}`);
+                        const msg = `JSON 解析失败 (JSON Parse Error)`;
+                        setRawJsonResult(`// ${msg}: \n${text}`);
+                        toast.error(msg);
                     }
                 } else {
                     let errorBody = text;
@@ -71,12 +79,15 @@ export const useODataQuery = (version: ODataVersion) => {
                         errorBody = JSON.stringify(jsonError, null, 2);
                     } catch (e) {}
                     setRawJsonResult(`// HTTP Error: ${response.status} ${response.statusText}\n// 详细信息 (Details):\n${errorBody}`);
+                    
+                    toast.error(`查询失败: ${response.status} ${response.statusText}\n请查看下方 JSON 预览获取详细信息。`);
                 }
             } else {
                 setRawJsonResult(`// 请求失败 (Network Error): ${jsonRes.reason}`);
+                toast.error(`网络错误 (Network Error): ${jsonRes.reason}`);
             }
 
-            // --- XML 处理 ---
+            // --- XML 处理 (仅作辅助显示，不触发 Toast) ---
             if (xmlRes.status === 'fulfilled') {
                 const response = xmlRes.value;
                 const text = await response.text();
@@ -101,11 +112,13 @@ export const useODataQuery = (version: ODataVersion) => {
 
         } catch (e: any) {
             console.error(e);
-            setRawJsonResult(`错误: ${e.message || e}`);
+            const msg = `执行错误: ${e.message || e}`;
+            setRawJsonResult(msg);
+            toast.error(msg);
         } finally {
             setLoading(false);
         }
-    }, [version]);
+    }, [version, toast]);
 
     return {
         loading,

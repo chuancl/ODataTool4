@@ -6,6 +6,7 @@ import {
     generateCSharpUpdateCode, generateJavaUpdateCode 
 } from '@/utils/odata-helper';
 import { EntityContextTask, collectSelectedItemsWithContext, resolveItemUri } from '@/utils/odata-traversal';
+import { useToast } from '@/components/ui/ToastContext';
 
 interface ActionState {
     codePreview: string | { url: string, sapui5: string, csharp: string, java: string };
@@ -30,6 +31,9 @@ export const useEntityActions = (
         itemsToProcess: []
     });
     const [isExecuting, setIsExecuting] = useState(false);
+    
+    // 集成 Toast
+    const toast = useToast();
 
     // --- 辅助：构建 Update Payload ---
     const buildUpdatePayload = (originalItem: any, changes: any, version: ODataVersion, schema: ParsedSchema | null, entityType: EntityType | null) => {
@@ -80,7 +84,7 @@ export const useEntityActions = (
         const tasks = collectSelectedItemsWithContext(rootData, selectedEntity, currentSchema, schema);
 
         if (!tasks || tasks.length === 0) {
-            alert("请先勾选需要删除的数据 (Please select rows to delete first)");
+            toast.warning("请先勾选需要删除的数据\n(Please select rows to delete first)");
             return;
         }
 
@@ -113,12 +117,12 @@ export const useEntityActions = (
             }
         });
         onOpen();
-    }, [url, version, schema, selectedEntity, currentSchema, onOpen]);
+    }, [url, version, schema, selectedEntity, currentSchema, onOpen, toast]);
 
     // --- 2. 准备更新 ---
     const prepareUpdate = useCallback((updates: { item: any, changes: any }[]) => {
         if (!updates || updates.length === 0) {
-            alert("请先修改数据 (Please modify data first)");
+            toast.warning("请先修改数据\n(Please modify data first)");
             return;
         }
 
@@ -130,12 +134,6 @@ export const useEntityActions = (
         // 转换为任务对象
         const tasks: (EntityContextTask & { changes?: any })[] = updates.map(u => {
             // 推断上下文
-            // 如果是在嵌套表格中修改，currentSchema 可能不是该 item 的 schema。
-            // 但 collectSelectedItemsWithContext 的逻辑比较复杂，这里简化处理：
-            // 我们假设 updates 传回来的 item 自身包含足够的元数据来恢复上下文，或者它就是 currentSchema 类型
-            
-            // 实际上，我们应该重新解析一下 item 的类型，为了简单起见，这里复用 resolveItemUri 的逻辑
-            // 如果是 V3，我们在这里就构建好 Payload，以便预览看到的是最终发送的样子
             const payload = buildUpdatePayload(u.item, u.changes, version, schema, currentSchema);
             
             return {
@@ -191,7 +189,7 @@ export const useEntityActions = (
         
         onOpen();
 
-    }, [url, version, selectedEntity, currentSchema, schema, onOpen]);
+    }, [url, version, selectedEntity, currentSchema, schema, onOpen, toast]);
 
 
     // --- 3. 执行批量请求 ---
@@ -202,6 +200,7 @@ export const useEntityActions = (
         const baseUrl = url.endsWith('/') ? url : `${url}/`;
         const results: string[] = [];
         let successCount = 0;
+        let failCount = 0;
 
         for (const task of state.itemsToProcess) {
             let { url: requestUrl } = resolveItemUri(task.item, baseUrl, task.entitySet, task.entityType);
@@ -211,6 +210,7 @@ export const useEntityActions = (
             
             if (!requestUrl) {
                 results.push(`SKIP: Unable to determine URL for item`);
+                failCount++;
                 continue;
             }
 
@@ -268,14 +268,25 @@ export const useEntityActions = (
                          errDisplay = JSON.stringify(jsonErr, null, 2);
                     } catch(e) {}
                     results.push(`FAILED (${res.status}): ${requestUrl}\nResponse: ${errDisplay}`);
+                    failCount++;
                 }
             } catch (e: any) {
                 results.push(`ERROR: ${requestUrl} - ${e.message}`);
+                failCount++;
             }
         }
 
-        setRawJsonResult(`// 批量操作报告 (Batch Operation Report):\n// 成功: ${successCount}, 失败: ${state.itemsToProcess.length - successCount}\n\n${results.join('\n')}`);
+        setRawJsonResult(`// 批量操作报告 (Batch Operation Report):\n// 成功: ${successCount}, 失败: ${failCount}\n\n${results.join('\n')}`);
         
+        // 汇总 Toast 提示
+        if (failCount === 0) {
+            toast.success(`批量操作成功: ${successCount} 项\n(Batch operation successful)`);
+        } else if (successCount === 0) {
+            toast.error(`批量操作全部失败: ${failCount} 项\n请查看 JSON 预览获取详细错误。\n(All operations failed. Check JSON preview for details)`);
+        } else {
+            toast.warning(`批量操作部分完成: 成功 ${successCount}, 失败 ${failCount}\n(Partial success)`);
+        }
+
         await refreshQuery(); 
         
         setIsExecuting(false);
