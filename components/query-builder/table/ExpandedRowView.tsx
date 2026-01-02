@@ -9,15 +9,16 @@ interface ExpandedRowViewProps {
     rowData: any;
     isDark: boolean;
     parentSelected: boolean;
-    schema?: ParsedSchema | null; // 新增
-    parentEntityName?: string; // 新增：用于查找导航属性的目标类型
+    schema?: ParsedSchema | null;
+    parentEntityName?: string;
+    onUpdate?: (updates: { item: any, changes: any }[]) => void; // Propagate Update
 }
 
 // ----------------------------------------------------------------------
 // ExpandedRowView Component (Master-Detail Content)
 // ----------------------------------------------------------------------
 export const ExpandedRowView: React.FC<ExpandedRowViewProps> = ({ 
-    rowData, isDark, parentSelected, schema, parentEntityName 
+    rowData, isDark, parentSelected, schema, parentEntityName, onUpdate 
 }) => {
     // 找出所有嵌套的属性（Expands），并尝试解析对应的实体类型
     const expandProps = useMemo(() => {
@@ -101,6 +102,7 @@ export const ExpandedRowView: React.FC<ExpandedRowViewProps> = ({
                                 parentSelected={parentSelected}
                                 schema={schema}
                                 entityName={prop.childEntityName}
+                                onUpdate={onUpdate} // Propagate update capability
                             />
                         </Tab>
                     ))}

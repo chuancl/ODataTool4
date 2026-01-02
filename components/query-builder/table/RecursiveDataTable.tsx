@@ -1,7 +1,7 @@
-import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Checkbox, Tooltip } from "@nextui-org/react";
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { Button, Checkbox, Tooltip, Input, Chip } from "@nextui-org/react";
 import { 
-    Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight, Key, Link2
+    Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight, Key, Link2, Pencil, Check, X
 } from 'lucide-react';
 import { 
     useReactTable, 
@@ -25,7 +25,8 @@ interface RecursiveDataTableProps {
     data: any[];
     isDark: boolean;
     isRoot?: boolean; // If true, shows global actions like Delete/Export
-    onDelete?: (selectedRows: any[]) => void; // Changed: Pass selected rows
+    onDelete?: (selectedRows: any[]) => void; 
+    onUpdate?: (updates: { item: any, changes: any }[]) => void;
     onExport?: () => void;
     loading?: boolean;
     parentSelected?: boolean; 
@@ -36,19 +37,12 @@ interface RecursiveDataTableProps {
 // 递归更新数据的选中状态
 const updateRecursiveSelection = (data: any, isSelected: boolean) => {
     if (!data) return;
-    
-    // 如果是数组，遍历处理
     if (Array.isArray(data)) {
         data.forEach(item => updateRecursiveSelection(item, isSelected));
         return;
     }
-
-    // 如果是对象，设置标记
     if (typeof data === 'object') {
-        // 直接修改数据对象，添加/更新 __selected 属性
         data['__selected'] = isSelected;
-
-        // 继续递归查找子属性
         Object.values(data).forEach(val => {
             if (isExpandableData(val)) {
                 if (Array.isArray(val)) {
@@ -68,6 +62,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     isDark, 
     isRoot = false, 
     onDelete, 
+    onUpdate,
     onExport, 
     loading = false,
     parentSelected = false,
@@ -87,6 +82,11 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const [expanded, setExpanded] = useState<ExpandedState>({});
     const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 
+    // --- Editing State ---
+    const [isEditing, setIsEditing] = useState(false);
+    // Keyed by Row Index (React-Table index)
+    const [editDraft, setEditDraft] = useState<Record<number, Record<string, any>>>({});
+
     // --- 1. 初始化及同步选中状态 ---
     useEffect(() => {
         const newSelection: RowSelectionState = {};
@@ -96,6 +96,10 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             }
         });
         setRowSelection(newSelection);
+        
+        // Reset edits when data changes externally (e.g. refresh)
+        setEditDraft({});
+        setIsEditing(false);
     }, [data, parentSelected]);
 
     // 监听容器宽度变化
@@ -114,7 +118,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const { pkSet, fkSet, fkInfoMap } = useMemo(() => {
         const pkSet = new Set<string>();
         const fkSet = new Set<string>();
-        const fkInfoMap = new Map<string, string>(); // fieldName -> targetEntity
+        const fkInfoMap = new Map<string, string>(); 
 
         if (schema && entityName && schema.entities) {
             let entityType = schema.entities.find(e => e.name === entityName);
@@ -146,6 +150,70 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         }
         return { pkSet, fkSet, fkInfoMap };
     }, [schema, entityName]);
+
+    // --- Edit Handlers ---
+    const handleStartEdit = () => {
+        const selectedCount = Object.keys(rowSelection).length;
+        if (selectedCount === 0) {
+            alert("请先勾选需要修改的行");
+            return;
+        }
+        setIsEditing(true);
+        // Initialize draft with current values for selected rows? 
+        // No need, we fallback to original value if draft is missing.
+    };
+
+    const handleCancelEdit = () => {
+        setIsEditing(false);
+        setEditDraft({});
+    };
+
+    const handleConfirmUpdate = () => {
+        if (!onUpdate) return;
+        
+        const updates: { item: any, changes: any }[] = [];
+        const changedIndices = Object.keys(editDraft).map(Number);
+        
+        changedIndices.forEach(idx => {
+            // Only process if row is still selected
+            if (rowSelection[idx]) {
+                const originalItem = data[idx];
+                const changes = editDraft[idx];
+                
+                // Calculate actual Diff
+                const realChanges: any = {};
+                let hasChanges = false;
+                Object.entries(changes).forEach(([key, newVal]) => {
+                    if (originalItem[key] != newVal) { // loose comparison for string/number match
+                        realChanges[key] = newVal;
+                        hasChanges = true;
+                    }
+                });
+
+                if (hasChanges) {
+                    updates.push({ item: originalItem, changes: realChanges });
+                }
+            }
+        });
+
+        if (updates.length === 0) {
+             alert("未检测到任何实质性修改 (No changes detected)");
+             return;
+        }
+
+        onUpdate(updates);
+    };
+
+    const handleInputChange = (rowIndex: number, columnId: string, value: string) => {
+        setEditDraft(prev => ({
+            ...prev,
+            [rowIndex]: {
+                ...(prev[rowIndex] || {}),
+                [columnId]: value
+            }
+        }));
+    };
+
 
     // --- Smart Column Width Algorithm ---
     const columnHelper = createColumnHelper<any>();
@@ -277,7 +345,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             const isFK = fkSet.has(key);
             const fkTarget = fkInfoMap.get(key);
 
-            // Accessor function is safer than string ID for dots in keys
             return columnHelper.accessor(row => row[key], { 
                 id: key,
                 header: () => (
@@ -297,17 +364,39 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         </span>
                     </div>
                 ),
-                cell: info => (
-                    <ContentRenderer 
-                        value={info.getValue()} 
-                        columnName={key} 
-                        onExpand={
-                            isExpandableData(info.getValue()) 
-                            ? info.row.getToggleExpandedHandler() 
-                            : undefined
-                        }
-                    />
-                ),
+                cell: info => {
+                    const isSelected = info.row.getIsSelected();
+                    // 仅当开启编辑模式、当前行被选中、且值不是复杂对象时，渲染输入框
+                    const value = info.getValue();
+                    const isEditable = isEditing && isSelected && !isExpandableData(value) && !isPK; // Usually don't edit PKs
+
+                    if (isEditable) {
+                         const currentDraft = editDraft[info.row.index]?.[key];
+                         const displayValue = currentDraft !== undefined ? currentDraft : (value === null ? '' : String(value));
+                         
+                         return (
+                            <Input 
+                                size="sm" 
+                                variant="bordered"
+                                value={displayValue}
+                                onValueChange={(val) => handleInputChange(info.row.index, key, val)}
+                                classNames={{ input: "text-xs font-mono h-6", inputWrapper: "h-7 min-h-7 px-1" }}
+                            />
+                         );
+                    }
+
+                    return (
+                        <ContentRenderer 
+                            value={value} 
+                            columnName={key} 
+                            onExpand={
+                                isExpandableData(value) 
+                                ? info.row.getToggleExpandedHandler() 
+                                : undefined
+                            }
+                        />
+                    );
+                },
                 size: finalWidth,
                 minSize: 60,
                 maxSize: 5000,
@@ -315,24 +404,19 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         });
 
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
-    }, [data, containerWidth, pkSet, fkSet, fkInfoMap]);
+    }, [data, containerWidth, pkSet, fkSet, fkInfoMap, isEditing, editDraft]);
 
     // Sync column order but prevent "Column not found" warnings
     useEffect(() => {
         if (columns.length > 0) {
-            // Only include IDs that actually exist in the current columns definition
             const validIds = new Set(columns.map(c => c.id));
             setColumnOrder(prev => {
                  const newOrder = columns.map(c => c.id as string);
-                 // If the previous order had valid columns, try to preserve user's sort order 
-                 // (complex logic omitted for stability, just resetting to default for now is safer)
                  return newOrder;
             });
         }
     }, [columns]); 
 
-    // Filter columnOrder to ensure only valid columns are passed to the table state
-    // This prevents the "Column with id 'XYZ' does not exist" warning
     const safeColumnOrder = useMemo(() => {
         const validIds = new Set(columns.map(c => c.id));
         return columnOrder.filter(id => validIds.has(id));
@@ -343,7 +427,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         columns,
         state: { 
             sorting, 
-            columnOrder: safeColumnOrder, // Use the safe filtered order
+            columnOrder: safeColumnOrder,
             rowSelection, 
             expanded 
         },
@@ -377,14 +461,42 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
     return (
         <div className="h-full flex flex-col bg-content1 overflow-hidden">
-            {isRoot && (
-                <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-end shrink-0">
-                    <div className="flex gap-2">
-                        {onDelete && <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
-                        <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>导出 Excel</Button>
-                    </div>
+            <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-between shrink-0 h-12">
+                 <div className="flex items-center gap-2">
+                    {/* Header Left Content if any */}
+                    {isEditing && (
+                        <Chip size="sm" color="warning" variant="flat" className="animate-pulse">编辑模式 (Editing)</Chip>
+                    )}
+                 </div>
+                 
+                 <div className="flex gap-2">
+                    {/* Edit Actions */}
+                    {onUpdate && !isEditing && (
+                         <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
+                             修改 (Modify)
+                         </Button>
+                    )}
+
+                    {isEditing && (
+                        <>
+                            <Button size="sm" color="success" variant="solid" className="text-white" onPress={handleConfirmUpdate} startContent={<Check size={14} />}>
+                                更新 (Update)
+                            </Button>
+                            <Button size="sm" color="default" variant="flat" onPress={handleCancelEdit} startContent={<X size={14} />}>
+                                取消 (Cancel)
+                            </Button>
+                        </>
+                    )}
+                    
+                    {/* Standard Actions (Hide when editing to prevent confusion) */}
+                    {!isEditing && (
+                        <>
+                            {onDelete && <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
+                            {isRoot && <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>导出 Excel</Button>}
+                        </>
+                    )}
                 </div>
-            )}
+            </div>
 
             <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
                 <table 
@@ -492,8 +604,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                                 rowData={row.original} 
                                                 isDark={isDark} 
                                                 parentSelected={row.getIsSelected()} 
-                                                schema={schema} // 传递 schema
-                                                parentEntityName={entityName} // 传递当前实体名作为父级
+                                                schema={schema} 
+                                                parentEntityName={entityName}
+                                                onUpdate={onUpdate} // Pass it down to nested tables
                                             />
                                         </td>
                                     </tr>

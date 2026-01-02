@@ -1,12 +1,16 @@
 import { useState, useCallback } from 'react';
 import { useDisclosure } from "@nextui-org/react";
-import { ODataVersion, ParsedSchema, EntityType, generateSAPUI5Code, generateCSharpDeleteCode, generateJavaDeleteCode } from '@/utils/odata-helper';
+import { 
+    ODataVersion, ParsedSchema, EntityType, 
+    generateSAPUI5Code, generateCSharpDeleteCode, generateJavaDeleteCode,
+    generateCSharpUpdateCode, generateJavaUpdateCode 
+} from '@/utils/odata-helper';
 import { EntityContextTask, collectSelectedItemsWithContext, resolveItemUri } from '@/utils/odata-traversal';
 
 interface ActionState {
     codePreview: string | { url: string, sapui5: string, csharp: string, java: string };
     modalAction: 'delete' | 'update' | 'create';
-    itemsToProcess: EntityContextTask[];
+    itemsToProcess: (EntityContextTask & { changes?: any })[]; // Extended to hold changes
 }
 
 export const useEntityActions = (
@@ -73,34 +77,70 @@ export const useEntityActions = (
         onOpen();
     }, [url, version, schema, selectedEntity, currentSchema, onOpen]);
 
-    // 2. 准备更新 (Placeholder for future implementation)
-    const prepareUpdate = useCallback((rootData: any[]) => {
-        // Logic similar to delete: collect items -> generate PATCH/PUT requests
-        const tasks = collectSelectedItemsWithContext(rootData, selectedEntity, currentSchema, schema);
-        if (!tasks || tasks.length === 0) {
-            alert("请先勾选需要更新的数据");
+    // 2. 准备更新
+    const prepareUpdate = useCallback((updates: { item: any, changes: any }[]) => {
+        if (!updates || updates.length === 0) {
+            alert("请先修改数据 (Please modify data first)");
             return;
         }
-        
-        // TODO: 这里可以进一步扩展，比如弹出一个简单的表单让用户输入要更新的字段
-        // 目前仅生成一个占位符代码
-        const urlList = tasks.map(t => {
-            const { url: itemUrl } = resolveItemUri(t.item, url, t.entitySet, t.entityType);
-            return `PATCH ${itemUrl} \n{ "Property": "NewValue" }`;
+
+        const baseUrl = url.endsWith('/') ? url : `${url}/`;
+        const urlList: string[] = [];
+        const sapUpdates: any[] = [];
+        const csUpdates: any[] = [];
+
+        // 将 Update 数据转换为处理任务
+        // 注意：这里我们主要处理 Root Entity 或明确传递了 Context 的数据
+        // 如果是从嵌套表格传来的，item 中通常应该包含足够的 metadata 供 resolveItemUri 使用
+        const tasks: (EntityContextTask & { changes?: any })[] = updates.map(u => ({
+            item: u.item,
+            changes: u.changes,
+            // 尝试推断 EntitySet，如果没有 Metadata，默认使用 selectedEntity (如果是Root)
+            // 更好的方式是 update 对象里携带了 entityContext
+            entitySet: selectedEntity, 
+            entityType: currentSchema
+        }));
+
+        tasks.forEach(task => {
+            // resolveItemUri 会尝试从 __metadata 或 @odata.id 恢复正确的 Context
+            // 如果 item 来自子表，它应该有 metadata
+            const { url: requestUrl, predicate } = resolveItemUri(task.item, baseUrl, null, null);
+
+            // 如果无法从 Item 自身解析，尝试使用传入的 selectedEntity (仅适用于 Root 表)
+            // 这里有优化空间：RecursiveDataTable 可以传递 EntitySet Name
+            const finalUrl = requestUrl || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).url;
+            const finalPredicate = predicate || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).predicate;
+
+            if (finalUrl && finalPredicate) {
+                urlList.push(`PATCH ${finalUrl}\nContent-Type: application/json\n\n${JSON.stringify(task.changes, null, 2)}`);
+                sapUpdates.push({ predicate: finalPredicate, changes: task.changes });
+                csUpdates.push({ predicate: finalPredicate, changes: task.changes });
+                
+                // 更新 task 的解析结果以便执行时使用
+                // Hack: store resolved URL on task item temporarily or rely on re-resolve
+            } else {
+                urlList.push(`// SKIP: Cannot determine URL for item`);
+            }
         });
+
+        // 生成代码
+        const codeSap = generateSAPUI5Code('update', selectedEntity, { updates: sapUpdates }, version);
+        const codeCSharp = generateCSharpUpdateCode(selectedEntity, csUpdates, baseUrl, version);
+        const codeJava = generateJavaUpdateCode(selectedEntity, csUpdates, version, baseUrl);
 
         setState({
             itemsToProcess: tasks,
             modalAction: 'update',
             codePreview: {
                 url: urlList.join('\n\n'),
-                sapui5: "// SAPUI5 Update Code Placeholder",
-                csharp: "// C# Update Code Placeholder",
-                java: "// Java Update Code Placeholder"
+                sapui5: codeSap,
+                csharp: codeCSharp,
+                java: codeJava
             }
         });
         onOpen();
-    }, [url, schema, selectedEntity, currentSchema, onOpen]);
+
+    }, [url, version, selectedEntity, currentSchema, onOpen]);
 
 
     // --- 执行阶段：批量发送请求 ---
@@ -113,24 +153,43 @@ export const useEntityActions = (
         let successCount = 0;
 
         for (const task of state.itemsToProcess) {
-            const { url: requestUrl } = resolveItemUri(task.item, baseUrl, task.entitySet, task.entityType);
+            // Re-resolve URL just to be safe
+            let { url: requestUrl } = resolveItemUri(task.item, baseUrl, task.entitySet, task.entityType);
+            
+            // Fallback for root items if metadata missing
+            if (!requestUrl) {
+                 requestUrl = resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).url;
+            }
             
             if (!requestUrl) {
-                results.push(`SKIP: Unable to determine URL`);
+                results.push(`SKIP: Unable to determine URL for item`);
                 continue;
             }
 
             try {
-                const method = state.modalAction === 'delete' ? 'DELETE' : 'PATCH';
-                // Note: Update requires a body, currently we assume it's just a demo or delete
-                // For 'delete', body is null.
-                const res = await fetch(requestUrl, { method });
+                const isDelete = state.modalAction === 'delete';
+                const method = isDelete ? 'DELETE' : 'PATCH'; // OData V2 usually accepts MERGE or PUT, but PATCH is standard for V3/V4. V2 often supports PATCH via X-HTTP-Method-Override or configuration.
                 
-                if (res.ok) {
+                const fetchOptions: RequestInit = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    }
+                };
+
+                if (!isDelete && task.changes) {
+                    fetchOptions.body = JSON.stringify(task.changes);
+                }
+
+                const res = await fetch(requestUrl, fetchOptions);
+                
+                if (res.ok || res.status === 204) {
                     results.push(`SUCCESS (${method}): ${requestUrl}`);
                     successCount++;
                 } else {
-                    results.push(`FAILED (${res.status}): ${requestUrl} - ${res.statusText}`);
+                    const errText = await res.text();
+                    results.push(`FAILED (${res.status}): ${requestUrl} - ${errText.substring(0, 100)}...`);
                 }
             } catch (e: any) {
                 results.push(`ERROR: ${requestUrl} - ${e.message}`);
@@ -138,9 +197,10 @@ export const useEntityActions = (
         }
 
         setRawJsonResult(`// 批量操作报告 (Batch Operation Report):\n// 成功: ${successCount}, 失败: ${state.itemsToProcess.length - successCount}\n\n${results.join('\n')}`);
-        setRawXmlResult(`<!-- Check JSON Tab for detailed report -->`);
         
-        await refreshQuery(); // 刷新表格
+        // 只有当有成功操作时才刷新，或者总是刷新？总是刷新比较好，以反映最新状态
+        await refreshQuery(); 
+        
         setIsExecuting(false);
         setState(prev => ({ ...prev, itemsToProcess: [] })); // 清空任务
     };
@@ -151,7 +211,7 @@ export const useEntityActions = (
         codePreview: state.codePreview,
         modalAction: state.modalAction,
         prepareDelete,
-        prepareUpdate, // 暴露更新方法
+        prepareUpdate, 
         executeBatch,
         isExecuting
     };

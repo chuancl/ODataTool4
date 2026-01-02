@@ -17,7 +17,8 @@ interface ResultTabsProps {
     rawXmlResult: string;
     loading: boolean;
     isDark: boolean;
-    onDelete: (selectedRows: any[]) => void; // Updated type
+    onDelete: (selectedRows: any[]) => void;
+    onUpdate?: (updates: { item: any, changes: any }[]) => void; // New Prop
     onExport: () => void;
     downloadFile: (content: string, filename: string, type: 'json' | 'xml') => void;
     entityName?: string; 
@@ -26,7 +27,7 @@ interface ResultTabsProps {
 
 export const ResultTabs: React.FC<ResultTabsProps> = ({
     queryResult, rawJsonResult, rawXmlResult, loading, isDark,
-    onDelete, onExport, downloadFile, entityName, schema
+    onDelete, onUpdate, onExport, downloadFile, entityName, schema
 }) => {
     const editorTheme = isDark ? vscodeDark : githubLight;
     
@@ -62,6 +63,7 @@ export const ResultTabs: React.FC<ResultTabsProps> = ({
                         isDark={isDark}
                         isRoot={true}
                         onDelete={onDelete}
+                        onUpdate={onUpdate} // Pass it down
                         onExport={onExport}
                         loading={loading}
                         entityName={entityName}

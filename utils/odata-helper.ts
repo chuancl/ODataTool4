@@ -255,8 +255,7 @@ export const parseMetadataToSchema = (xmlText: string): ParsedSchema => {
 };
 
 // 3. SAPUI5 Code Generator
-export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
-    // 简单的 SAPUI5 代码生成示例
+export const generateSAPUI5Code = (op: 'read'|'delete'|'create'|'update', es: string, p: any, v: ODataVersion) => {
     let code = `// SAPUI5 OData ${v} Code for ${op} on ${es}\n`;
     code += `var oModel = this.getView().getModel();\n`;
     
@@ -293,6 +292,18 @@ export const generateSAPUI5Code = (op: any, es: string, p: any, v: any) => {
         code += `  success: function(oData, response) { console.log("Created"); },\n`;
         code += `  error: function(oError) { console.error(oError); }\n`;
         code += `});`;
+    } else if (op === 'update') {
+        // p.updates is array of { predicate: string, changes: object }
+        code += `// Update (PATCH) ${p.updates?.length || 1} items\n`;
+        code += `var mParameters = {\n`;
+        code += `    success: function() { console.log("Update success"); },\n`;
+        code += `    error: function(oError) { console.error("Update failed", oError); }\n`;
+        code += `};\n\n`;
+
+        p.updates?.forEach((upd: any) => {
+             code += `var oData = ${JSON.stringify(upd.changes)};\n`;
+             code += `oModel.update("/${es}${upd.predicate}", oData, mParameters);\n`;
+        });
     }
 
     return code; 
@@ -326,28 +337,44 @@ export const generateCSharpDeleteCode = (entitySet: string, keyPredicates: strin
     return sb;
 };
 
+export const generateCSharpUpdateCode = (entitySet: string, updates: { predicate: string, changes: any }[], baseUrl: string, version: ODataVersion) => {
+    const cleanUrl = baseUrl.replace(/\/$/, '');
+    let sb = `// C# HttpClient Example for Updating (PATCH) ${entitySet} (${version})\n`;
+    sb += `using System;\nusing System.Net.Http;\nusing System.Text;\nusing System.Threading.Tasks;\nusing Newtonsoft.Json;\n\n`;
+    sb += `public async Task UpdateItemsAsync()\n{\n`;
+    sb += `    using (var client = new HttpClient())\n    {\n`;
+    sb += `        client.BaseAddress = new Uri("${cleanUrl}/");\n`;
+    
+    if (version === 'V4') {
+        sb += `        client.DefaultRequestHeaders.Add("OData-Version", "4.0");\n`;
+    } else {
+        sb += `        client.DefaultRequestHeaders.Add("DataServiceVersion", "2.0");\n`;
+    }
+    sb += `\n`;
+    
+    updates.forEach(upd => {
+        sb += `        // PATCH ${entitySet}${upd.predicate}\n`;
+        sb += `        var json = JsonConvert.SerializeObject(new ${JSON.stringify(upd.changes).replace(/"/g, '\"')});\n`;
+        sb += `        var content = new StringContent(json, Encoding.UTF8, "application/json");\n`;
+        sb += `        // Note: Use PatchAsync extension or proper HTTP method construction\n`;
+        sb += `        var request = new HttpRequestMessage(new HttpMethod("PATCH"), "${entitySet}${upd.predicate}") { Content = content };\n`;
+        sb += `        var response = await client.SendAsync(request);\n`;
+        sb += `        response.EnsureSuccessStatusCode();\n\n`;
+    });
+    
+    sb += `    }\n}`;
+    return sb;
+};
+
 // 5. Java Olingo Code Generator
 export const generateJavaDeleteCode = (entitySet: string, keyPredicates: string[], version: ODataVersion, baseUrl: string) => {
-    // For V2/V3, we default to using the Olingo V3 Client (via V4 wrapper or directly).
-    // Olingo V2 native library is deprecated/server-side focused, so V3 client is the closest "native" client.
     let sb = '';
-    let clientMethod = 'getClient()'; // Default V4
+    let clientMethod = version === 'V4' ? 'getClient()' : 'getV3()';
 
-    if (version === 'V4') {
-        sb += `// Java Olingo V4 Client Example\n`;
-        clientMethod = 'getClient()';
-    } else {
-        // Handle V2 and V3 using getV3() for compatibility
-        sb += `// Java Olingo Client Example (V2/V3 Compatible)\n`;
-        sb += `// Note: Uses Olingo V3 Client API which is compatible with V2 for standard CRUD.\n`;
-        clientMethod = 'getV3()';
-    }
-
-    sb += `// Dependencies: org.apache.olingo:odata-client-core:4.x, org.apache.olingo:odata-client-api:4.x\n`;
+    sb += `// Java Olingo Client Example (Delete)\n`;
     sb += `import org.apache.olingo.client.api.ODataClient;\n`;
     sb += `import org.apache.olingo.client.core.ODataClientFactory;\n`;
     sb += `import org.apache.olingo.client.api.communication.request.cud.ODataDeleteRequest;\n`;
-    sb += `import org.apache.olingo.client.api.communication.response.ODataDeleteResponse;\n`;
     sb += `import java.net.URI;\n\n`;
     
     sb += `public void deleteItems() {\n`;
@@ -355,34 +382,44 @@ export const generateJavaDeleteCode = (entitySet: string, keyPredicates: string[
     sb += `    ODataClient client = ODataClientFactory.${clientMethod};\n\n`;
     
     keyPredicates.forEach(pred => {
-        sb += `    try {\n`;
-        sb += `        URI uri = client.newURIBuilder(serviceRoot)\n`;
-        sb += `            .appendEntitySetSegment("${entitySet}")\n`;
-        
-        // Handle predicate
         const keyVal = pred.replace(/^\(/, '').replace(/\)$/, '');
-        // For simple single keys, we can use appendKeySegment(value). 
-        if (keyVal.includes('=')) {
-                sb += `            .appendKeySegment(${pred}) // Check key format if composite\n`;
-        } else {
-                sb += `            .appendKeySegment(${keyVal})\n`;
-        }
+        sb += `    URI uri = client.newURIBuilder(serviceRoot).appendEntitySetSegment("${entitySet}").appendKeySegment(${keyVal}).build();\n`;
+        sb += `    ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
+        sb += `    client.getCUDRequestFactory().getDeleteRequest(uri).execute();\n`;
+    });
+    sb += `}\n`;
+    return sb;
+};
 
-        sb += `            .build();\n\n`;
-        sb += `        ODataDeleteRequest request = client.getCUDRequestFactory().getDeleteRequest(uri);\n`;
-        // For V2, we might want to manually set headers if strict V2 is required, but client usually handles it.
-        if (version === 'V2') {
-             sb += `        request.addCustomHeader("DataServiceVersion", "2.0");\n`;
-             sb += `        request.addCustomHeader("MaxDataServiceVersion", "2.0");\n`;
-        }
+export const generateJavaUpdateCode = (entitySet: string, updates: { predicate: string, changes: any }[], version: ODataVersion, baseUrl: string) => {
+    let sb = '';
+    let clientMethod = version === 'V4' ? 'getClient()' : 'getV3()';
 
-        sb += `        ODataDeleteResponse response = request.execute();\n`;
-        sb += `        if (response.getStatusCode() == 204) {\n`;
-        sb += `            System.out.println("Deleted: " + uri);\n`;
-        sb += `        }\n`;
-        sb += `    } catch (Exception e) {\n`;
-        sb += `        e.printStackTrace();\n`;
-        sb += `    }\n`;
+    sb += `// Java Olingo Client Example (Update/Patch)\n`;
+    sb += `import org.apache.olingo.client.api.ODataClient;\n`;
+    sb += `import org.apache.olingo.client.core.ODataClientFactory;\n`;
+    sb += `import org.apache.olingo.client.api.domain.ClientEntity;\n`;
+    sb += `import org.apache.olingo.client.api.communication.request.cud.ODataEntityUpdateRequest;\n`;
+    sb += `import org.apache.olingo.commons.api.format.ContentType;\n`;
+    sb += `import org.apache.olingo.client.api.communication.request.cud.UpdateType;\n`;
+    sb += `import java.net.URI;\n\n`;
+    
+    sb += `public void updateItems() {\n`;
+    sb += `    String serviceRoot = "${baseUrl}";\n`;
+    sb += `    ODataClient client = ODataClientFactory.${clientMethod};\n\n`;
+    
+    updates.forEach(upd => {
+        const keyVal = upd.predicate.replace(/^\(/, '').replace(/\)$/, '');
+        sb += `    // Update for key: ${upd.predicate}\n`;
+        sb += `    ClientEntity entity = client.getObjectFactory().newEntity(null);\n`;
+        Object.entries(upd.changes).forEach(([k, v]) => {
+             const valStr = typeof v === 'string' ? `"${v}"` : v;
+             sb += `    entity.getProperties().add(client.getObjectFactory().newPrimitiveProperty("${k}", client.getObjectFactory().newPrimitiveValueBuilder().build(${valStr})));\n`;
+        });
+        
+        sb += `    URI uri = client.newURIBuilder(serviceRoot).appendEntitySetSegment("${entitySet}").appendKeySegment(${keyVal}).build();\n`;
+        sb += `    ODataEntityUpdateRequest<ClientEntity> request = client.getCUDRequestFactory().getEntityUpdateRequest(uri, UpdateType.PATCH, entity);\n`;
+        sb += `    request.execute();\n\n`;
     });
     sb += `}\n`;
     return sb;
