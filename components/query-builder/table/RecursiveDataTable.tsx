@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Button, Checkbox, Tooltip, Input, Chip } from "@nextui-org/react";
+import { Button, Checkbox, Tooltip, Input, Chip, Switch } from "@nextui-org/react";
 import { 
     Trash, Save, ChevronUp, ChevronDown, GripVertical, ChevronRight, Key, Link2, Pencil, Check, X
 } from 'lucide-react';
@@ -24,7 +24,7 @@ import { ParsedSchema } from '@/utils/odata-helper';
 interface RecursiveDataTableProps {
     data: any[];
     isDark: boolean;
-    isRoot?: boolean; // If true, shows global actions like Delete/Export
+    isRoot?: boolean; 
     onDelete?: (selectedRows: any[]) => void; 
     onUpdate?: (updates: { item: any, changes: any }[]) => void;
     onExport?: () => void;
@@ -33,6 +33,24 @@ interface RecursiveDataTableProps {
     entityName?: string;
     schema?: ParsedSchema | null;
 }
+
+// 辅助：日期格式转换
+const toInputDate = (val: any) => {
+    if (!val) return '';
+    const str = String(val);
+    // 2023-10-10T12:00:00.000Z -> 2023-10-10T12:00
+    if (str.length >= 16 && str.includes('T')) {
+        return str.substring(0, 16);
+    }
+    return str;
+};
+
+const fromInputDate = (val: string) => {
+    if (!val) return null;
+    // 补全秒数和时区 Z，使其符合常见 OData ISO 格式
+    if (val.length === 16) return `${val}:00Z`;
+    return val;
+};
 
 // 递归更新数据的选中状态
 const updateRecursiveSelection = (data: any, isSelected: boolean) => {
@@ -55,6 +73,75 @@ const updateRecursiveSelection = (data: any, isSelected: boolean) => {
             }
         });
     }
+};
+
+// --- Cell Component (Defined outside to maintain stability) ---
+const EditableCell = ({ getValue, row, column, table }: any) => {
+    const initialValue = getValue();
+    // 从 table meta 中获取动态状态，避免列定义重新生成导致 input 失去焦点
+    const { editDraft, handleInputChange, isEditing, schemaProperties, pkSet } = table.options.meta as any;
+    
+    const isSelected = row.getIsSelected();
+    const columnId = column.id;
+    const isPK = pkSet.has(columnId);
+    const isExpandable = isExpandableData(initialValue);
+
+    // Schema Type Check
+    const propDef = schemaProperties?.[columnId];
+    const type = propDef?.type || 'Edm.String';
+    const isBoolean = type === 'Edm.Boolean';
+    const isDate = type === 'Edm.DateTime' || type === 'Edm.DateTimeOffset';
+
+    // 如果处于编辑模式且行被选中，且不是主键或复杂对象，则渲染编辑器
+    if (isEditing && isSelected && !isExpandable && !isPK) {
+        const currentDraft = editDraft[row.index]?.[columnId];
+        // 优先显示草稿值，否则显示初始值
+        const displayValue = currentDraft !== undefined ? currentDraft : (initialValue ?? '');
+
+        if (isBoolean) {
+            return (
+                <Switch 
+                    size="sm" 
+                    isSelected={displayValue === true || String(displayValue) === 'true'}
+                    onValueChange={(checked) => handleInputChange(row.index, columnId, checked)}
+                />
+            );
+        }
+
+        if (isDate) {
+            return (
+                <input
+                    type="datetime-local"
+                    className="w-full h-7 text-xs px-1 border border-default-300 rounded bg-transparent focus:border-primary outline-none"
+                    value={toInputDate(displayValue)}
+                    onChange={(e) => handleInputChange(row.index, columnId, fromInputDate(e.target.value))}
+                />
+            );
+        }
+
+        return (
+            <Input 
+                size="sm" 
+                variant="bordered"
+                value={String(displayValue)}
+                onValueChange={(val) => handleInputChange(row.index, columnId, val)}
+                classNames={{ input: "text-xs font-mono h-6", inputWrapper: "h-7 min-h-7 px-1" }}
+            />
+        );
+    }
+
+    // 默认显示模式
+    return (
+        <ContentRenderer 
+            value={initialValue} 
+            columnName={columnId} 
+            onExpand={
+                isExpandable
+                ? row.getToggleExpandedHandler() 
+                : undefined
+            }
+        />
+    );
 };
 
 export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({ 
@@ -84,7 +171,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
     // --- Editing State ---
     const [isEditing, setIsEditing] = useState(false);
-    // Keyed by Row Index (React-Table index)
     const [editDraft, setEditDraft] = useState<Record<number, Record<string, any>>>({});
 
     // --- 1. 初始化及同步选中状态 ---
@@ -96,8 +182,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             }
         });
         setRowSelection(newSelection);
-        
-        // Reset edits when data changes externally (e.g. refresh)
         setEditDraft({});
         setIsEditing(false);
     }, [data, parentSelected]);
@@ -114,14 +198,16 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         return () => observer.disconnect();
     }, []);
 
-    // --- Identify PKs & FKs based on Schema ---
-    const { pkSet, fkSet, fkInfoMap } = useMemo(() => {
+    // --- Schema Analysis ---
+    const { pkSet, fkSet, fkInfoMap, schemaProperties } = useMemo(() => {
         const pkSet = new Set<string>();
         const fkSet = new Set<string>();
         const fkInfoMap = new Map<string, string>(); 
+        const schemaProperties: Record<string, any> = {};
 
         if (schema && entityName && schema.entities) {
             let entityType = schema.entities.find(e => e.name === entityName);
+            // 尝试模糊匹配或查找 EntitySet 对应的 Type
             if (!entityType) {
                 const es = schema.entitySets.find(s => s.name === entityName);
                 if (es) {
@@ -135,6 +221,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
             if (entityType) {
                 entityType.keys.forEach(k => pkSet.add(k));
+                entityType.properties.forEach(p => {
+                    schemaProperties[p.name] = p;
+                });
                 entityType.navigationProperties.forEach(nav => {
                     if (nav.constraints) {
                         nav.constraints.forEach(c => {
@@ -148,15 +237,15 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 });
             }
         }
-        return { pkSet, fkSet, fkInfoMap };
+        return { pkSet, fkSet, fkInfoMap, schemaProperties };
     }, [schema, entityName]);
 
     // --- Edit Handlers ---
     const handleStartEdit = () => {
         const selectedCount = Object.keys(rowSelection).length;
         if (selectedCount === 0) {
-            alert("请先勾选需要修改的行 (Please select rows to modify first)");
-            return;
+            // alert("请先勾选需要修改的行 (Please select rows to modify first)");
+            // Allow editing even without pre-selection, we will auto-select on input
         }
         setIsEditing(true);
     };
@@ -173,6 +262,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         const changedIndices = Object.keys(editDraft).map(Number);
         
         changedIndices.forEach(idx => {
+            // 只有当行被选中时才提交更新
             if (rowSelection[idx]) {
                 const originalItem = data[idx];
                 const changes = editDraft[idx];
@@ -180,7 +270,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 const realChanges: any = {};
                 let hasChanges = false;
                 Object.entries(changes).forEach(([key, newVal]) => {
-                    // Simple loose equality check
                     if (originalItem[key] != newVal) {
                         realChanges[key] = newVal;
                         hasChanges = true;
@@ -194,15 +283,19 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         });
 
         if (updates.length === 0) {
-             alert("未检测到任何实质性修改 (No changes detected)");
+             const hasDrafts = Object.keys(editDraft).length > 0;
+             if (hasDrafts) {
+                 alert("检测到修改，但未选中对应行。请勾选修改过的行再点击更新。\n(Changes detected but rows not selected. Please select modified rows.)");
+             } else {
+                 alert("未检测到任何实质性修改 (No changes detected)");
+             }
              return;
         }
 
         onUpdate(updates);
-        // Do not auto close edit mode here; let parent handle refresh/success
     };
 
-    const handleInputChange = (rowIndex: number, columnId: string, value: string) => {
+    const handleInputChange = (rowIndex: number, columnId: string, value: any) => {
         setEditDraft(prev => ({
             ...prev,
             [rowIndex]: {
@@ -210,12 +303,20 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 [columnId]: value
             }
         }));
+        
+        // 自动选中正在修改的行 (Auto-select row on edit)
+        if (!rowSelection[rowIndex]) {
+            setRowSelection(prev => ({ ...prev, [rowIndex]: true }));
+            // 同时也更新数据源标记，以便导出等功能感知
+            updateRecursiveSelection(data[rowIndex], true);
+        }
     };
-
 
     // --- Smart Column Width Algorithm ---
     const columnHelper = createColumnHelper<any>();
     
+    // IMPORTANT: columns useMemo should NOT depend on 'editDraft' or 'isEditing'
+    // This ensures the DOM structure of cells (Inputs) is not destroyed on every keystroke.
     const columns = useMemo(() => {
         if (!data || data.length === 0) return [];
         
@@ -362,38 +463,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         </span>
                     </div>
                 ),
-                cell: info => {
-                    const isSelected = info.row.getIsSelected();
-                    const value = info.getValue();
-                    const isEditable = isEditing && isSelected && !isExpandableData(value) && !isPK;
-
-                    if (isEditable) {
-                         const currentDraft = editDraft[info.row.index]?.[key];
-                         const displayValue = currentDraft !== undefined ? currentDraft : (value === null ? '' : String(value));
-                         
-                         return (
-                            <Input 
-                                size="sm" 
-                                variant="bordered"
-                                value={displayValue}
-                                onValueChange={(val) => handleInputChange(info.row.index, key, val)}
-                                classNames={{ input: "text-xs font-mono h-6", inputWrapper: "h-7 min-h-7 px-1" }}
-                            />
-                         );
-                    }
-
-                    return (
-                        <ContentRenderer 
-                            value={value} 
-                            columnName={key} 
-                            onExpand={
-                                isExpandableData(value) 
-                                ? info.row.getToggleExpandedHandler() 
-                                : undefined
-                            }
-                        />
-                    );
-                },
+                // Use the stable component here
+                cell: EditableCell, 
                 size: finalWidth,
                 minSize: 60,
                 maxSize: 5000,
@@ -401,7 +472,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         });
 
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
-    }, [data, containerWidth, pkSet, fkSet, fkInfoMap, isEditing, editDraft]);
+    }, [data, containerWidth, pkSet, fkSet, fkInfoMap]); // Dependencies reduced!
 
     // Sync column order
     useEffect(() => {
@@ -422,6 +493,13 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const table = useReactTable({
         data,
         columns,
+        meta: {
+            editDraft,
+            handleInputChange,
+            isEditing,
+            schemaProperties,
+            pkSet
+        },
         state: { 
             sorting, 
             columnOrder: safeColumnOrder,
@@ -467,14 +545,14 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                  </div>
                  
                  <div className="flex gap-2">
-                    {/* 1. Modify Button: Only hidden if already in edit mode (to switch to Update/Cancel) */}
+                    {/* 1. Modify Button */}
                     {!isEditing && (
                         <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
                             修改 (Modify)
                         </Button>
                     )}
 
-                    {/* 2. Update/Cancel Buttons: Only visible in edit mode */}
+                    {/* 2. Update/Cancel Buttons */}
                     {isEditing && (
                         <>
                             <Button size="sm" color="success" variant="solid" className="text-white" onPress={handleConfirmUpdate} startContent={<Check size={14} />}>
@@ -486,12 +564,12 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         </>
                     )}
                     
-                    {/* 3. Delete Button: Always visible */}
+                    {/* 3. Delete Button */}
                     <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>
                         删除 (Delete)
                     </Button>
 
-                    {/* 4. Export Button: Always visible */}
+                    {/* 4. Export Button */}
                     <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>
                         导出 Excel
                     </Button>
