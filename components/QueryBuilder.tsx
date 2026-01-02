@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDisclosure, Selection } from "@nextui-org/react";
-import { generateSAPUI5Code, generateCSharpDeleteCode, generateJavaDeleteCode, ODataVersion, ParsedSchema } from '@/utils/odata-helper';
+import { generateSAPUI5Code, generateCSharpDeleteCode, generateJavaDeleteCode, ODataVersion, ParsedSchema, EntityType } from '@/utils/odata-helper';
 import xmlFormat from 'xml-formatter';
 
 import { ParamsForm, SortItem } from './query-builder/ParamsForm';
@@ -13,6 +13,12 @@ interface Props {
   version: ODataVersion;
   isDark: boolean;
   schema: ParsedSchema | null;
+}
+
+interface DeleteTask {
+    item: any;
+    entitySet: string | null;
+    entityType: EntityType | null;
 }
 
 const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
@@ -44,8 +50,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   const [codePreview, setCodePreview] = useState<string | { url: string, sapui5: string, csharp: string, java: string }>('');
   const [modalAction, setModalAction] = useState<'delete'|'update'>('delete');
   
-  // 待删除的数据项缓存
-  const [itemsToDelete, setItemsToDelete] = useState<any[]>([]);
+  // 待删除的数据项缓存 (Rich objects)
+  const [itemsToDelete, setItemsToDelete] = useState<DeleteTask[]>([]);
 
   // 1. 初始化：使用传入的 Schema 填充 EntitySets
   useEffect(() => {
@@ -222,14 +228,15 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
   };
 
   // 生成单条数据的唯一 Key 谓词字符串 (e.g. "(ID=1)" 或 "(Key1=1,Key2='A')")
-  const getKeyPredicate = (item: any): string | null => {
+  // 修改：接受 entityType 参数，以支持子表的 Key 生成
+  const getKeyPredicate = (item: any, entityType: EntityType | null): string | null => {
       let keys: string[] = [];
       
       // 1. 尝试从 Schema 获取 Key 定义
-      if (currentSchema && currentSchema.keys.length > 0) {
-          keys = currentSchema.keys;
+      if (entityType && entityType.keys.length > 0) {
+          keys = entityType.keys;
       } 
-      // 2. 尝试常见的 Key 字段名
+      // 2. 尝试常见的 Key 字段名 (Fallback)
       else {
           const possibleKeys = ['ID', 'Id', 'id', 'Uuid', 'UUID', 'Guid', 'Key'];
           const found = possibleKeys.find(k => item[k] !== undefined);
@@ -256,62 +263,93 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       }
   };
 
-  /**
-   * 递归辅助函数：从整个 queryResult 树中收集所有被标记为 __selected 的项
-   * 这解决了子表数据未被“顶层 handleDelete”捕获的问题
-   */
-  const collectAllSelectedItems = (data: any[]): any[] => {
-      const selected: any[] = [];
+  // --- Helpers for Schema Traversal ---
+  const findEntitySetByType = useCallback((shortTypeName: string): string | null => {
+      if (!schema) return null;
+      // Search in entitySets where entityType ends with shortTypeName (ignoring namespace)
+      const set = schema.entitySets.find(es => es.entityType.endsWith(`.${shortTypeName}`) || es.entityType === shortTypeName);
+      return set ? set.name : null;
+  }, [schema]);
+
+  const findEntityTypeObj = useCallback((shortTypeName: string): EntityType | null => {
+      if (!schema) return null;
+      return schema.entities.find(e => e.name === shortTypeName) || null;
+  }, [schema]);
+
+  // --- Context-Aware Collection ---
+  // 递归遍历数据，同时根据 Schema 跟踪当前数据的 EntitySet 和 EntityType
+  // 这确保了子表数据能关联到正确的 EntitySet，从而生成正确的 DELETE URL
+  const collectSelectedItemsWithContext = useCallback((
+      items: any[], 
+      entitySet: string | null, 
+      entityType: EntityType | null
+  ): DeleteTask[] => {
+      let results: DeleteTask[] = [];
       
-      const traverse = (node: any) => {
-          if (Array.isArray(node)) {
-              node.forEach(traverse);
-          } else if (typeof node === 'object' && node !== null) {
-              // 1. 检查当前节点是否选中
-              if (node['__selected'] === true) {
-                  selected.push(node);
-              }
-              // 2. 递归检查子属性 (OData 关联/扩展)
-              Object.entries(node).forEach(([key, val]) => {
-                  if (key !== '__metadata' && key !== '__deferred') {
-                      if (Array.isArray(val) || (typeof val === 'object' && val !== null)) {
-                          // 特殊处理 V2 结果包装 { results: [...] }
-                          if (val && (val as any).results && Array.isArray((val as any).results)) {
-                              traverse((val as any).results);
-                          } else {
-                              traverse(val);
-                          }
-                      }
+      items.forEach(node => {
+          // 1. Add current node if selected
+          if (node['__selected'] === true) {
+              results.push({ item: node, entitySet, entityType });
+          }
+          
+          // 2. Traverse children based on Schema Navigation Properties
+          if (entityType && typeof node === 'object' && node !== null) {
+              entityType.navigationProperties.forEach(nav => {
+                  if (node[nav.name]) {
+                       // Resolve Child Type
+                       let targetType = nav.targetType;
+                       if (targetType?.startsWith('Collection(')) targetType = targetType.slice(11, -1);
+                       const shortType = targetType?.split('.').pop();
+                       
+                       if (shortType) {
+                           const childSet = findEntitySetByType(shortType);
+                           const childTypeObj = findEntityTypeObj(shortType);
+                           
+                           let childrenData = node[nav.name];
+                           // Handle V2 response wrapper { results: [...] }
+                           if (childrenData && childrenData.results && Array.isArray(childrenData.results)) {
+                               childrenData = childrenData.results;
+                           }
+                           
+                           if (!Array.isArray(childrenData)) {
+                               childrenData = [childrenData]; // Handle 1:1 as array
+                           }
+                           
+                           // Recursive call with Child Context
+                           if (childrenData.length > 0) {
+                                results = results.concat(collectSelectedItemsWithContext(childrenData, childSet, childTypeObj));
+                           }
+                       }
                   }
               });
           }
-      };
+      });
+      return results;
+  }, [findEntitySetByType, findEntityTypeObj]);
 
-      traverse(data);
-      return selected;
-  };
 
   // 点击删除按钮触发（准备阶段）
-  // 注意：不再依赖传入的 selectedItems (仅含顶层)，而是重新全量扫描
   const handleDelete = () => {
-    // 1. 全局递归收集所有选中项 (包含嵌套子表)
-    const allSelectedItems = collectAllSelectedItems(queryResult);
+    // 使用上下文感知收集器，从根结果开始遍历
+    // 根 EntitySet = selectedEntity, 根 EntityType = currentSchema
+    const allSelectedTasks = collectSelectedItemsWithContext(queryResult, selectedEntity, currentSchema);
 
-    if (!allSelectedItems || allSelectedItems.length === 0) {
+    if (!allSelectedTasks || allSelectedTasks.length === 0) {
         alert("请先勾选需要删除的数据 (Please select rows to delete first)");
         return;
     }
 
-    setItemsToDelete(allSelectedItems);
+    setItemsToDelete(allSelectedTasks);
     
     // 收集所有需要删除的 Key Predicate 和 完整 URL
     const predicates: string[] = [];
     const urlList: string[] = [];
     const baseUrl = url.endsWith('/') ? url : `${url}/`;
 
-    allSelectedItems.forEach(item => {
+    allSelectedTasks.forEach(task => {
+        const { item, entitySet, entityType } = task;
+        
         // --- 核心：确定删除 URL ---
-        // 优先使用 OData Metadata 中的 Self Link，这对于删除子表数据（EntitySet 不同）至关重要
         let explicitUri = null;
 
         // V2 Metadata
@@ -320,7 +358,6 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
         }
         // V4 Context/ID
         else if (item['@odata.id']) {
-            // @odata.id 可能是绝对路径或相对路径
             explicitUri = item['@odata.id'];
             if (explicitUri && !explicitUri.startsWith('http')) {
                 explicitUri = `${url.replace(/\/$/, '')}/${explicitUri.replace(/^\//, '')}`;
@@ -335,19 +372,21 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
 
         if (explicitUri) {
              urlList.push(`DELETE ${explicitUri}`);
-             // 尝试从 URI 提取谓词用于展示 (e.g. Products(1))
              const match = explicitUri.match(/\/([^\/]+\(.+\))$/);
              if (match) predicates.push(match[1]);
              else predicates.push(`(From URI)`);
         } else {
-            // 回退逻辑：仅适用于顶层实体（因为我们知道 selectedEntity）
-            // 如果是子项且无 metadata，这里生成的 URL 可能是错误的（使用了父级 EntitySet）
-            const pred = getKeyPredicate(item);
-            if (pred) {
-                predicates.push(pred);
-                urlList.push(`DELETE ${baseUrl}${selectedEntity}${pred}  // Warning: Inferred path`);
+            // 回退逻辑：使用上下文中的 entitySet 和 entityType
+            if (entitySet) {
+                const pred = getKeyPredicate(item, entityType);
+                if (pred) {
+                    predicates.push(pred);
+                    urlList.push(`DELETE ${baseUrl}${entitySet}${pred}  // Warning: Inferred path from Schema`);
+                } else {
+                    urlList.push(`// SKIP: Cannot determine Key for item in ${entitySet}`);
+                }
             } else {
-                urlList.push(`// SKIP: Cannot determine DELETE URL for item`);
+                 urlList.push(`// SKIP: Cannot determine EntitySet for item (Metadata missing)`);
             }
         }
     });
@@ -385,8 +424,8 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       const results: string[] = [];
       let successCount = 0;
 
-      for (const item of itemsToDelete) {
-          // 同样的逻辑：优先寻找 Metadata URI
+      for (const task of itemsToDelete) {
+          const { item, entitySet, entityType } = task;
           let deleteUrl = '';
           
           if (item.__metadata && item.__metadata.uri) {
@@ -395,10 +434,12 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
               deleteUrl = item['@odata.id'];
               if (!deleteUrl.startsWith('http')) deleteUrl = `${url.replace(/\/$/, '')}/${deleteUrl.replace(/^\//, '')}`;
           } else {
-              // Fallback
-              const predicate = getKeyPredicate(item);
-              if (predicate) {
-                  deleteUrl = `${baseUrl}${selectedEntity}${predicate}`;
+              // Fallback with correct EntitySet
+              if (entitySet) {
+                  const predicate = getKeyPredicate(item, entityType);
+                  if (predicate) {
+                      deleteUrl = `${baseUrl}${entitySet}${predicate}`;
+                  }
               }
           }
 
@@ -420,14 +461,12 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           }
       }
 
-      // 将执行结果显示在结果面板
       setRawJsonResult(`// 批量删除结果 (Batch Delete Report):\n// 成功: ${successCount}, 失败: ${itemsToDelete.length - successCount}\n\n${results.join('\n')}`);
       setRawXmlResult(`<!-- Check JSON Tab for detailed delete report -->`);
       
-      // 重新加载数据
       await executeQuery();
       setLoading(false);
-      setItemsToDelete([]); // 清空缓存
+      setItemsToDelete([]); 
   };
 
   const handleEntityChange = (keys: Selection) => {
