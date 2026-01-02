@@ -164,12 +164,31 @@ export const useEntityActions = (
                 const isDelete = state.modalAction === 'delete';
                 const method = isDelete ? 'DELETE' : 'PATCH'; 
                 
+                // Construct Headers
+                const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                };
+
+                // Add Version Headers (Critical for OData)
+                if (version === 'V4') {
+                    headers['OData-Version'] = '4.0';
+                    headers['OData-MaxVersion'] = '4.0';
+                } else {
+                    // V2/V3
+                    headers['DataServiceVersion'] = '2.0'; 
+                    headers['MaxDataServiceVersion'] = '3.0'; // Allow up to V3
+                    
+                    if (version === 'V3') {
+                        // V3 often works best with minimalmetadata or verbose, default might be strictly checked
+                        // We use minimalmetadata for JSON Light if supported, or server will fallback
+                        headers['Accept'] = 'application/json;odata=minimalmetadata, application/json;odata=verbose, application/json';
+                    }
+                }
+                
                 const fetchOptions: RequestInit = {
                     method: method,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    }
+                    headers: headers
                 };
 
                 if (!isDelete && task.changes) {
