@@ -69,7 +69,7 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
                 <input 
                     id="input-top"
                     className="w-full bg-transparent text-center font-mono text-sm outline-none h-6 text-default-700 placeholder:text-default-300 focus:text-primary transition-colors"
-                    value={top}
+                    value={top || ''} 
                     onChange={(e) => setTop(e.target.value)}
                     placeholder="20"
                 />
@@ -84,7 +84,7 @@ export const PaginationControls: React.FC<PaginationControlsProps> = ({
                 <input 
                     id="input-skip"
                     className="w-full bg-transparent text-center font-mono text-sm outline-none h-6 text-default-700 placeholder:text-default-300 focus:text-primary transition-colors"
-                    value={skip}
+                    value={skip || ''}
                     onChange={(e) => setSkip(e.target.value)}
                     placeholder="0"
                 />

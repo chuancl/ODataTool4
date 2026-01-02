@@ -185,8 +185,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 <div className="flex items-center justify-center w-full">
                      <Checkbox
                         size="sm"
-                        isIndeterminate={table.getIsSomeRowsSelected()}
-                        isSelected={table.getIsAllRowsSelected()}
+                        isIndeterminate={!!table.getIsSomeRowsSelected()}
+                        isSelected={!!table.getIsAllRowsSelected()}
                         onValueChange={(val) => {
                             const isSelected = !!val;
                             table.toggleAllRowsSelected(isSelected);
@@ -201,7 +201,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 <div className="flex items-center justify-center w-full">
                     <Checkbox
                         size="sm"
-                        isSelected={row.getIsSelected()}
+                        isSelected={!!row.getIsSelected()}
                         onValueChange={(val) => {
                             const isSelected = !!val;
                             row.toggleSelected(isSelected);
@@ -263,7 +263,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         const shouldScale = availableWidthForData > 0 && totalBaseWidth < availableWidthForData;
         const scaleRatio = shouldScale ? (availableWidthForData / totalBaseWidth) : 1;
 
-        let currentTotalWidth = 0; // Fix: Defined inside useMemo
+        let currentTotalWidth = 0;
 
         const dataColumns = rawKeys.map((key, index) => {
             let finalWidth = Math.floor(columnMeta[key] * scaleRatio);
@@ -277,7 +277,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             const isFK = fkSet.has(key);
             const fkTarget = fkInfoMap.get(key);
 
-            return columnHelper.accessor(key, { 
+            // FIX: Use accessor function `row => row[key]` instead of string `key`.
+            // This prevents TanStack Table from interpreting dots in OData keys (e.g. "@odata.type") as nested paths.
+            return columnHelper.accessor(row => row[key], { 
                 id: key,
                 header: () => (
                     <div className="flex items-center gap-1.5">
@@ -316,11 +318,13 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
     }, [data, containerWidth, pkSet, fkSet, fkInfoMap]);
 
+    // FIX: Depend on column IDs string to ensure order updates when columns change (avoids "Column not found" warnings)
+    const columnIds = columns.map(c => c.id).join(',');
     useEffect(() => {
         if (columns.length > 0) {
             setColumnOrder(columns.map(c => c.id as string));
         }
-    }, [columns.length]); 
+    }, [columnIds]); 
 
     const table = useReactTable({
         data,
