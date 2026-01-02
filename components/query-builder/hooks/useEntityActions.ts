@@ -10,7 +10,7 @@ import { EntityContextTask, collectSelectedItemsWithContext, resolveItemUri } fr
 interface ActionState {
     codePreview: string | { url: string, sapui5: string, csharp: string, java: string };
     modalAction: 'delete' | 'update' | 'create';
-    itemsToProcess: (EntityContextTask & { changes?: any })[]; // Extended to hold changes
+    itemsToProcess: (EntityContextTask & { changes?: any })[]; 
 }
 
 export const useEntityActions = (
@@ -31,11 +31,52 @@ export const useEntityActions = (
     });
     const [isExecuting, setIsExecuting] = useState(false);
 
-    // --- 准备阶段：收集数据并生成预览代码 ---
-    
-    // 1. 准备删除
+    // --- 辅助：构建 Update Payload ---
+    const buildUpdatePayload = (originalItem: any, changes: any, version: ODataVersion, schema: ParsedSchema | null, entityType: EntityType | null) => {
+        // 1. 深拷贝 changes，避免修改原始引用
+        const payload = JSON.parse(JSON.stringify(changes));
+
+        // 2. 清理可能存在的系统字段 (防止误传)
+        delete payload.__metadata;
+        delete payload.__deferred;
+        delete payload.__selected;
+        delete payload['@odata.context'];
+        delete payload['@odata.etag'];
+
+        // 3. 注入类型信息 (根据版本)
+        if (version === 'V4') {
+            // --- OData V4 ---
+            // 优先使用原数据中的 @odata.type
+            let typeName = originalItem['@odata.type'];
+            // 兜底：从 Schema 推断
+            if (!typeName && schema && entityType) {
+                // V4 格式通常是 "#Namespace.TypeName"
+                typeName = schema.namespace ? `#${schema.namespace}.${entityType.name}` : `#${entityType.name}`;
+            }
+            if (typeName) {
+                payload['@odata.type'] = typeName;
+            }
+        } else {
+            // --- OData V2 / V3 ---
+            // 必须使用 __metadata: { type: "..." }
+            let typeName = originalItem.__metadata?.type;
+            
+            // 兜底：从 Schema 推断
+            if (!typeName && schema && entityType) {
+                typeName = schema.namespace ? `${schema.namespace}.${entityType.name}` : entityType.name;
+            }
+
+            if (typeName) {
+                // 仅注入 type，不要带 uri 等其他 metadata，防止服务端校验失败
+                payload.__metadata = { type: typeName };
+            }
+        }
+
+        return payload;
+    };
+
+    // --- 1. 准备删除 ---
     const prepareDelete = useCallback((rootData: any[]) => {
-        // 使用工具类进行递归遍历
         const tasks = collectSelectedItemsWithContext(rootData, selectedEntity, currentSchema, schema);
 
         if (!tasks || tasks.length === 0) {
@@ -47,10 +88,8 @@ export const useEntityActions = (
         const urlList: string[] = [];
         const baseUrl = url.endsWith('/') ? url : `${url}/`;
 
-        // 生成 URL 列表
         tasks.forEach(task => {
             const { url: deleteUrl, predicate } = resolveItemUri(task.item, baseUrl, task.entitySet, task.entityType);
-            
             if (deleteUrl) {
                 urlList.push(`DELETE ${deleteUrl}`);
                 predicates.push(predicate || '(Unknown Key)');
@@ -59,7 +98,6 @@ export const useEntityActions = (
             }
         });
 
-        // 生成多语言代码
         const codeSap = generateSAPUI5Code('delete', selectedEntity, { keyPredicates: predicates }, version);
         const codeCSharp = generateCSharpDeleteCode(selectedEntity, predicates, baseUrl, version);
         const codeJava = generateJavaDeleteCode(selectedEntity, predicates, version, baseUrl);
@@ -77,7 +115,7 @@ export const useEntityActions = (
         onOpen();
     }, [url, version, schema, selectedEntity, currentSchema, onOpen]);
 
-    // 2. 准备更新
+    // --- 2. 准备更新 ---
     const prepareUpdate = useCallback((updates: { item: any, changes: any }[]) => {
         if (!updates || updates.length === 0) {
             alert("请先修改数据 (Please modify data first)");
@@ -89,66 +127,53 @@ export const useEntityActions = (
         const sapUpdates: any[] = [];
         const csUpdates: any[] = [];
 
-        // 将 Update 数据转换为处理任务，并注入类型信息
+        // 转换为任务对象
         const tasks: (EntityContextTask & { changes?: any })[] = updates.map(u => {
-            // 复制变更数据
-            const payload = { ...u.changes };
-
-            // --- 关键修复：注入类型信息 ---
-            // 解决 "Type information must be specified" 错误
-            // 我们必须确保 payload 中包含类型元数据，且 Content-Type 设置为 verbose (见 executeBatch)
-            if (version !== 'V4') {
-                let typeName = u.item.__metadata?.type;
-
-                // 兜底策略：如果数据中没有 metadata（因为之前没用 verbose 查询），
-                // 尝试根据当前 Schema 拼接类型名称：Namespace.EntityName
-                if (!typeName && schema && currentSchema) {
-                    typeName = schema.namespace ? `${schema.namespace}.${currentSchema.name}` : currentSchema.name;
-                }
-
-                if (typeName) {
-                    payload.__metadata = { type: typeName };
-                }
-            } 
-            // OData V4 需要 @odata.type
-            else {
-                let typeName = u.item['@odata.type'];
-                if (!typeName && schema && currentSchema) {
-                     typeName = schema.namespace ? `#${schema.namespace}.${currentSchema.name}` : `#${currentSchema.name}`;
-                }
-                if (typeName) {
-                    payload['@odata.type'] = typeName;
-                }
-            }
-
+            // 推断上下文
+            // 如果是在嵌套表格中修改，currentSchema 可能不是该 item 的 schema。
+            // 但 collectSelectedItemsWithContext 的逻辑比较复杂，这里简化处理：
+            // 我们假设 updates 传回来的 item 自身包含足够的元数据来恢复上下文，或者它就是 currentSchema 类型
+            
+            // 实际上，我们应该重新解析一下 item 的类型，为了简单起见，这里复用 resolveItemUri 的逻辑
+            // 如果是 V3，我们在这里就构建好 Payload，以便预览看到的是最终发送的样子
+            const payload = buildUpdatePayload(u.item, u.changes, version, schema, currentSchema);
+            
             return {
                 item: u.item,
-                changes: payload, // 使用带有类型信息的 Payload
-                // 尝试推断 EntitySet，如果没有 Metadata，默认使用 selectedEntity (如果是Root)
-                entitySet: selectedEntity, 
+                changes: payload,
+                entitySet: selectedEntity, // 默认上下文，后续会尝试自愈
                 entityType: currentSchema
             };
         });
 
         tasks.forEach(task => {
-            // resolveItemUri 会尝试从 __metadata 或 @odata.id 恢复正确的 Context
-            const { url: requestUrl, predicate } = resolveItemUri(task.item, baseUrl, null, null);
+            // 尝试获取准确 URL
+            let { url: requestUrl, predicate } = resolveItemUri(task.item, baseUrl, null, null);
+            if (!requestUrl) {
+                // 回退到当前选中的实体集
+                const fallback = resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema);
+                requestUrl = fallback.url;
+                predicate = fallback.predicate;
+            }
 
-            // 如果无法从 Item 自身解析，尝试使用传入的 selectedEntity (仅适用于 Root 表)
-            const finalUrl = requestUrl || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).url;
-            const finalPredicate = predicate || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).predicate;
+            if (requestUrl) {
+                // 预览信息
+                let headerInfo = "";
+                if (version === 'V3') headerInfo = "Content-Type: application/json;odata=verbose\nDataServiceVersion: 3.0";
+                else if (version === 'V4') headerInfo = "Content-Type: application/json\nOData-Version: 4.0";
+                else headerInfo = "Content-Type: application/json\nDataServiceVersion: 2.0";
 
-            if (finalUrl && finalPredicate) {
-                // 在预览中显示，注意这里是 Patch 请求体预览
-                urlList.push(`PATCH ${finalUrl}\nContent-Type: application/json;odata=verbose\n\n${JSON.stringify(task.changes, null, 2)}`);
-                sapUpdates.push({ predicate: finalPredicate, changes: task.changes });
-                csUpdates.push({ predicate: finalPredicate, changes: task.changes });
+                urlList.push(`PATCH ${requestUrl}\n${headerInfo}\n\n${JSON.stringify(task.changes, null, 2)}`);
+                
+                if (predicate) {
+                    sapUpdates.push({ predicate: predicate, changes: task.changes });
+                    csUpdates.push({ predicate: predicate, changes: task.changes });
+                }
             } else {
-                urlList.push(`// SKIP: Cannot determine URL for item. Missing Metadata or Key.`);
+                urlList.push(`// SKIP: Cannot determine URL for item (Missing Key/Metadata)`);
             }
         });
 
-        // 生成代码
         const codeSap = generateSAPUI5Code('update', selectedEntity, { updates: sapUpdates }, version);
         const codeCSharp = generateCSharpUpdateCode(selectedEntity, csUpdates, baseUrl, version);
         const codeJava = generateJavaUpdateCode(selectedEntity, csUpdates, version, baseUrl);
@@ -164,13 +189,12 @@ export const useEntityActions = (
             }
         });
         
-        // 确保打开模态框
         onOpen();
 
     }, [url, version, selectedEntity, currentSchema, schema, onOpen]);
 
 
-    // --- 执行阶段：批量发送请求 ---
+    // --- 3. 执行批量请求 ---
     const executeBatch = async () => {
         if (state.itemsToProcess.length === 0) return;
         setIsExecuting(true);
@@ -180,10 +204,7 @@ export const useEntityActions = (
         let successCount = 0;
 
         for (const task of state.itemsToProcess) {
-            // Re-resolve URL just to be safe
             let { url: requestUrl } = resolveItemUri(task.item, baseUrl, task.entitySet, task.entityType);
-            
-            // Fallback for root items if metadata missing
             if (!requestUrl) {
                  requestUrl = resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).url;
             }
@@ -195,37 +216,33 @@ export const useEntityActions = (
 
             try {
                 const isDelete = state.modalAction === 'delete';
+                // V2 传统上使用 MERGE，但现代 V2 和 V3/V4 都支持 PATCH。
+                // 这里的 PATCH 是标准选择。
                 const method = isDelete ? 'DELETE' : 'PATCH'; 
                 
-                // Construct Headers
                 const headers: Record<string, string> = {
                     'Accept': 'application/json'
                 };
 
-                // Add Version & Content-Type Headers (Critical for OData)
+                // --- 严格的版本控制 Header 注入 ---
                 if (version === 'V4') {
-                    headers['Content-Type'] = 'application/json';
+                    // OData V4
                     headers['OData-Version'] = '4.0';
                     headers['OData-MaxVersion'] = '4.0';
+                    headers['Content-Type'] = 'application/json'; // V4 默认 JSON
+                } else if (version === 'V3') {
+                    // OData V3
+                    // 修复报错: "DataServiceVersion '2.0' is too low..."
+                    headers['DataServiceVersion'] = '3.0'; 
+                    headers['MaxDataServiceVersion'] = '3.0';
+                    // 修复报错: "Type information must be specified..." (必须用 verbose 才能识别 __metadata)
+                    headers['Content-Type'] = isDelete ? 'application/json' : 'application/json;odata=verbose';
+                    headers['Accept'] = 'application/json;odata=verbose';
                 } else {
-                    // V2/V3 Logic
-                    if (version === 'V3') {
-                        // CRITICAL FIX: Use verbose JSON for V3 updates to ensure __metadata is processed
-                        // Standard 'application/json' in V3 defaults to Light, which ignores __metadata
-                        headers['Content-Type'] = isDelete ? 'application/json' : 'application/json;odata=verbose';
-                        
-                        // Explicitly set 3.0 as requested by server error
-                        headers['DataServiceVersion'] = '3.0'; 
-                        headers['MaxDataServiceVersion'] = '3.0';
-                        
-                        // Use Verbose Accept for V3 to get consistent responses
-                        headers['Accept'] = 'application/json;odata=verbose';
-                    } else {
-                        // V2 (or Unknown)
-                        headers['Content-Type'] = 'application/json';
-                        headers['DataServiceVersion'] = '2.0'; 
-                        headers['MaxDataServiceVersion'] = '3.0'; 
-                    }
+                    // OData V2
+                    headers['DataServiceVersion'] = '2.0'; 
+                    headers['MaxDataServiceVersion'] = '2.0'; // 有些服务接受 3.0
+                    headers['Content-Type'] = 'application/json';
                 }
                 
                 const fetchOptions: RequestInit = {
@@ -239,13 +256,18 @@ export const useEntityActions = (
 
                 const res = await fetch(requestUrl, fetchOptions);
                 
-                // 204 No Content is common for OData updates
                 if (res.ok || res.status === 204) {
                     results.push(`SUCCESS (${method}): ${requestUrl}`);
                     successCount++;
                 } else {
                     const errText = await res.text();
-                    results.push(`FAILED (${res.status}): ${requestUrl} - ${errText.substring(0, 200)}...`);
+                    let errDisplay = errText.substring(0, 300);
+                    try {
+                         // 尝试美化 JSON 错误
+                         const jsonErr = JSON.parse(errText);
+                         errDisplay = JSON.stringify(jsonErr, null, 2);
+                    } catch(e) {}
+                    results.push(`FAILED (${res.status}): ${requestUrl}\nResponse: ${errDisplay}`);
                 }
             } catch (e: any) {
                 results.push(`ERROR: ${requestUrl} - ${e.message}`);
@@ -254,11 +276,10 @@ export const useEntityActions = (
 
         setRawJsonResult(`// 批量操作报告 (Batch Operation Report):\n// 成功: ${successCount}, 失败: ${state.itemsToProcess.length - successCount}\n\n${results.join('\n')}`);
         
-        // 操作后刷新
         await refreshQuery(); 
         
         setIsExecuting(false);
-        setState(prev => ({ ...prev, itemsToProcess: [] })); // 清空任务
+        setState(prev => ({ ...prev, itemsToProcess: [] }));
     };
 
     return {

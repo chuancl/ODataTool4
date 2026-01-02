@@ -15,25 +15,34 @@ export const useODataQuery = (version: ODataVersion) => {
         setQueryResult([]);
 
         try {
-            // 使用原始生成的 URL，不添加非标准参数
             const fetchUrl = generatedUrl;
 
-            // --- 关键修改：针对 OData V3 强制使用 Verbose 模式 ---
-            // 这样返回的数据才会包含 __metadata 字段，确保后续 Update/Delete 操作能获取到 Type 信息
-            const jsonAccept = version === 'V3' 
-                ? 'application/json;odata=verbose' 
-                : 'application/json';
+            // --- 构建查询 Headers ---
+            // 必须与 Update/Delete 保持一致，以确保上下文一致性 (如 V3 verbose)
+            const headers: Record<string, string> = {};
+
+            if (version === 'V4') {
+                headers['Accept'] = 'application/json';
+                headers['OData-Version'] = '4.0';
+                headers['OData-MaxVersion'] = '4.0';
+            } else if (version === 'V3') {
+                // V3: 必须显式要求 verbose 才能拿到 __metadata
+                headers['Accept'] = 'application/json;odata=verbose';
+                headers['DataServiceVersion'] = '3.0';
+                headers['MaxDataServiceVersion'] = '3.0';
+            } else {
+                // V2
+                headers['Accept'] = 'application/json';
+                headers['DataServiceVersion'] = '2.0';
+                headers['MaxDataServiceVersion'] = '2.0';
+            }
 
             const [jsonRes, xmlRes] = await Promise.allSettled([
                 fetch(fetchUrl, { 
-                    headers: { 
-                        'Accept': jsonAccept,
-                        // 对于 V3，明确告知服务端版本是个好习惯
-                        ...(version === 'V3' ? { 'DataServiceVersion': '3.0', 'MaxDataServiceVersion': '3.0' } : {})
-                    },
-                    // 仅依靠浏览器层面的 no-store
+                    headers: headers,
                     cache: 'no-store' 
                 }),
+                // XML 请求保持标准头
                 fetch(fetchUrl, { 
                     headers: { 'Accept': 'application/xml, application/atom+xml' },
                     cache: 'no-store'
@@ -96,12 +105,12 @@ export const useODataQuery = (version: ODataVersion) => {
         } finally {
             setLoading(false);
         }
-    }, [version]); // 添加 version 依赖
+    }, [version]);
 
     return {
         loading,
         queryResult,
-        setQueryResult, // 允许外部修改 (例如删除后清空)
+        setQueryResult, 
         rawJsonResult,
         setRawJsonResult,
         rawXmlResult,
