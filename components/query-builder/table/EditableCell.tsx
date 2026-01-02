@@ -2,26 +2,6 @@ import React from 'react';
 import { Input, Switch, Tooltip } from "@nextui-org/react";
 import { ContentRenderer } from '../ContentRenderer';
 import { isExpandableData, toInputDate, fromInputDate } from './utils';
-import { Lock } from 'lucide-react';
-
-// --- 辅助：判断是否为不宜编辑的文件/二进制数据 ---
-const isFileLike = (val: any, columnName: string): boolean => {
-    if (!val) return false;
-    const str = String(val);
-    
-    // 1. Data URI
-    if (str.startsWith('data:')) return true;
-    
-    // 2. 典型的 Base64 文件头 (Magic Numbers)
-    const MAGIC_NUMBERS = ['/9j/', 'iVBORw0KGgo', 'R0lGOD', 'Qk', 'UklGR', 'JVBER', 'UEsDB'];
-    if (str.length > 50 && /^[A-Za-z0-9+/]*={0,2}$/.test(str.replace(/\s/g, ''))) {
-        if (MAGIC_NUMBERS.some(m => str.startsWith(m))) return true;
-        // 启发式：如果列名包含 image/file 且内容很长，视为文件
-        if (/image|photo|file|doc|stream|blob/i.test(columnName) && str.length > 200) return true;
-    }
-
-    return false;
-};
 
 // --- Cell Component ---
 export const EditableCell = ({ getValue, row, column, table }: any) => {
@@ -39,8 +19,8 @@ export const EditableCell = ({ getValue, row, column, table }: any) => {
     
     // 提取约束条件
     const maxLength = propDef?.maxLength;
-    //const precision = propDef?.precision;
-    //const scale = propDef?.scale;
+    const precision = propDef?.precision;
+    const scale = propDef?.scale;
 
     // --- 类型特征判断 ---
     const isBoolean = type === 'Edm.Boolean';
@@ -58,58 +38,72 @@ export const EditableCell = ({ getValue, row, column, table }: any) => {
     else if (type === 'Edm.SByte') { minAttr = -128; maxAttr = 127; }
     else if (type === 'Edm.Int16') { minAttr = -32768; maxAttr = 32767; }
     else if (type === 'Edm.Int32') { minAttr = -2147483648; maxAttr = 2147483647; }
-    // Int64 范围太大，HTML input number 可能有精度问题，通常作为字符串处理或不做严格 max 限制
+    // Int64/Decimal 范围通常由 Precision 控制，或者太大不适合 HTML min/max
 
     // --- 值变更处理 ---
     const handleTypedChange = (val: string) => {
         let finalVal: any = val;
 
         if (type) {
-             // 1. 整数处理
-             if (isInteger) {
+             // 1. 数值类型处理 (Integer & Decimal)
+             if (isInteger || isDecimal) {
                  if (val === '') {
                     finalVal = null; 
                  } else {
-                     // 限制输入必须为数字
-                     if (!/^-?\d*$/.test(val)) return; // 拒绝非数字输入
+                     // A. 基础字符检查 (只允许数字, 负号, 小数点)
+                     const regex = isInteger ? /^-?\d*$/ : /^-?\d*\.?\d*$/;
+                     if (!regex.test(val)) return; 
 
-                     let num = parseInt(val, 10);
-                     if (!isNaN(num)) {
-                         // 范围检查 (Range Check)
-                         if (minAttr !== undefined && num < minAttr) num = minAttr;
-                         if (maxAttr !== undefined && num > maxAttr) num = maxAttr;
+                     // B. 精度与小数位检查 (Precision & Scale)
+                     if (isDecimal && precision !== undefined) {
+                         const parts = val.split('.');
+                         // 去除负号计算数字位数
+                         const intPart = parts[0].replace('-', '');
+                         const decPart = parts[1] || '';
                          
-                         // Int64 特殊处理：如果后端需要字符串格式的数字，则保持 string
-                         if (type === 'Edm.Int64') finalVal = val; 
-                         else finalVal = num;
-                     }
-                 }
-             }
-             // 2. 小数处理
-             else if (isDecimal) {
-                 if (val === '') {
-                     finalVal = null;
-                 } else {
-                     // 允许小数点
-                     if (!/^-?\d*\.?\d*$/.test(val)) return;
+                         // Scale 检查 (小数位)
+                         // 默认如果没有 scale，是否允许小数？通常 Edm.Decimal 需要 scale。
+                         // 如果 scale 未定义，但在 V4 可能是 Variable。这里假设 undefined 不限制或限制宽松。
+                         if (scale !== undefined && decPart.length > scale) return;
 
-                     // 简单的 float 转换，精度控制通常在失去焦点时做，输入时不宜过于强制
+                         // Precision 检查 (总有效位数: 整数位 + 小数位)
+                         const totalDigits = intPart.length + decPart.length;
+                         if (totalDigits > precision) return;
+                     }
+
                      const num = parseFloat(val);
                      if (!isNaN(num)) {
-                         // Decimal 同样有时需要传字符串以保精度
-                         if (type === 'Edm.Decimal') finalVal = num; // 或 val
-                         else finalVal = num;
+                         // C. 范围检查 (Min/Max)
+                         // 只有当数字完整有效时才检查，避免阻止用户输入 "-"
+                         if (minAttr !== undefined && num < minAttr) return;
+                         if (maxAttr !== undefined && num > maxAttr) return;
+                         
+                         // D. 存储策略
+                         // 为了更好的 UX (如输入 "1." 不被重置为 "1")，以及 OData 类型的特殊性：
+                         // 如果字符串表示与数字表示完全一致，存为 Number (JSON payload 更干净)
+                         // 否则 (如 "1.", "007", "-0"), 存为 String，保留用户输入状态
+                         if (String(num) === val) {
+                             // 对于 Edm.Int64 和 Edm.Decimal，OData 经常推荐 String 传输以防精度丢失
+                             // 但如果用户输入的是简单数字，转为 Number 也是符合 JSON 标准的。
+                             // 如果是 Int64 且数值极大，JS Number 会丢失精度，此时 String(num) !== val，会自动走 else 分支存 String
+                             finalVal = num;
+                         } else {
+                             finalVal = val;
+                         }
+                     } else {
+                         // 处理 "-" 或 "." 等中间状态
+                         finalVal = val;
                      }
                  }
              }
-             // 3. GUID 处理
+             // 2. GUID 处理
              else if (isGuid) {
-                 if (val.length > 36) return; // 长度限制
+                 if (val.length > 36) return;
                  finalVal = val;
              }
-             // 4. 字符串处理
+             // 3. 字符串处理
              else {
-                 if (maxLength && val.length > maxLength) return; // 长度限制
+                 if (maxLength && val.length > maxLength) return; 
                  finalVal = val;
              }
         }
@@ -123,17 +117,7 @@ export const EditableCell = ({ getValue, row, column, table }: any) => {
         const currentDraft = editDraft[row.index]?.[columnId];
         const displayValue = currentDraft !== undefined ? currentDraft : (initialValue ?? '');
 
-        // 1. 文件/二进制类型检测：禁止编辑
-        if (isFileLike(displayValue, columnId) || type === 'Edm.Binary' || type === 'Edm.Stream') {
-            return (
-                <div className="flex items-center gap-2 opacity-60 cursor-not-allowed bg-default-100 p-1 rounded border border-default-200">
-                    <Lock size={12} className="text-default-400" />
-                    <span className="text-[10px] text-default-500 italic">文件类型不可编辑</span>
-                </div>
-            );
-        }
-
-        // 2. 布尔值 Switch
+        // 1. 布尔值 Switch
         if (isBoolean) {
             return (
                 <div className="flex items-center h-7">
@@ -146,7 +130,7 @@ export const EditableCell = ({ getValue, row, column, table }: any) => {
             );
         }
 
-        // 3. 日期时间
+        // 2. 日期时间
         if (isDate) {
             return (
                 <input
@@ -158,29 +142,34 @@ export const EditableCell = ({ getValue, row, column, table }: any) => {
             );
         }
 
-        // 4. 数值类型 Input
+        // 3. 数值类型 Input
         if (isInteger || isDecimal) {
+            // 构建提示信息
+            const hints: string[] = [`Type: ${type.split('.').pop()}`];
+            if (minAttr !== undefined) hints.push(`Min: ${minAttr}`);
+            if (maxAttr !== undefined) hints.push(`Max: ${maxAttr}`);
+            if (precision !== undefined) hints.push(`Prec: ${precision}`);
+            if (scale !== undefined) hints.push(`Scale: ${scale}`);
+
             return (
-                <Tooltip content={`Type: ${type.split('.').pop()} ${minAttr!==undefined ? `[${minAttr}, ${maxAttr}]` : ''}`} delay={1000}>
+                <Tooltip content={hints.join(', ')} delay={1000}>
                     <Input 
-                        type="number"
+                        // 使用 text 类型以获得对 "-" 和 "." 输入的完全控制，避免浏览器 number input 的默认行为干扰正则校验
+                        type="text" 
                         size="sm" 
                         variant="bordered"
                         value={String(displayValue)}
                         onValueChange={handleTypedChange}
                         classNames={{ input: "text-xs font-mono h-6", inputWrapper: "h-7 min-h-7 px-1" }}
-                        // HTML5 Constraints
-                        min={minAttr}
-                        max={maxAttr}
-                        step={isInteger ? "1" : "any"}
                     />
                 </Tooltip>
             );
         }
 
-        // 5. 默认字符串 Input
+        // 4. 默认/字符串/文件 Input
+        // 允许直接编辑所有文本内容 (包括 Base64)
         return (
-            <Tooltip content={maxLength ? `Max Length: ${maxLength}` : "Text"} delay={1000} isDisabled={!maxLength}>
+            <Tooltip content={maxLength ? `Max Length: ${maxLength}` : "Text / File String"} delay={1000} isDisabled={!maxLength}>
                 <Input 
                     type="text"
                     size="sm" 
