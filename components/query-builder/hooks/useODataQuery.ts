@@ -15,9 +15,17 @@ export const useODataQuery = (version: ODataVersion) => {
         setQueryResult([]);
 
         try {
+            // 添加 cache: 'no-store' 以禁用浏览器缓存，确保获取服务器最新状态
+            // 这解决了删除/更新后，重新查询仍然显示旧数据的问题
             const [jsonRes, xmlRes] = await Promise.allSettled([
-                fetch(generatedUrl, { headers: { 'Accept': 'application/json' } }),
-                fetch(generatedUrl, { headers: { 'Accept': 'application/xml, application/atom+xml' } })
+                fetch(generatedUrl, { 
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store' 
+                }),
+                fetch(generatedUrl, { 
+                    headers: { 'Accept': 'application/xml, application/atom+xml' },
+                    cache: 'no-store'
+                })
             ]);
 
             // --- JSON 处理 ---
