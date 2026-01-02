@@ -175,14 +175,17 @@ export const useEntityActions = (
                     headers['OData-Version'] = '4.0';
                     headers['OData-MaxVersion'] = '4.0';
                 } else {
-                    // V2/V3
-                    headers['DataServiceVersion'] = '2.0'; 
-                    headers['MaxDataServiceVersion'] = '3.0'; // Allow up to V3
-                    
+                    // V2/V3 Logic
                     if (version === 'V3') {
-                        // V3 often works best with minimalmetadata or verbose, default might be strictly checked
-                        // We use minimalmetadata for JSON Light if supported, or server will fallback
+                        // V3 requires explicit 3.0 for DataServiceVersion mostly, especially for JSON Light or writing
+                        headers['DataServiceVersion'] = '3.0'; 
+                        headers['MaxDataServiceVersion'] = '3.0';
+                        // V3 specific Accept header for JSON
                         headers['Accept'] = 'application/json;odata=minimalmetadata, application/json;odata=verbose, application/json';
+                    } else {
+                        // V2 (or Unknown)
+                        headers['DataServiceVersion'] = '2.0'; 
+                        headers['MaxDataServiceVersion'] = '3.0'; 
                     }
                 }
                 
