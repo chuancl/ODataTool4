@@ -95,8 +95,8 @@ export const useEntityActions = (
             const payload = { ...u.changes };
 
             // --- 关键修复：注入类型信息 ---
-            // 解决 "Type information must be specified for types that take part in inheritance" 错误
-            // OData V2/V3 需要 __metadata: { type: ... }
+            // 解决 "Type information must be specified" 错误
+            // 我们必须确保 payload 中包含类型元数据，且 Content-Type 设置为 verbose (见 executeBatch)
             if (version !== 'V4') {
                 if (u.item.__metadata?.type) {
                     payload.__metadata = { type: u.item.__metadata.type };
@@ -111,7 +111,7 @@ export const useEntityActions = (
 
             return {
                 item: u.item,
-                changes: payload, // 使用带有类型信息的 Payload 作为 changes
+                changes: payload, // 使用带有类型信息的 Payload
                 // 尝试推断 EntitySet，如果没有 Metadata，默认使用 selectedEntity (如果是Root)
                 entitySet: selectedEntity, 
                 entityType: currentSchema
@@ -127,7 +127,8 @@ export const useEntityActions = (
             const finalPredicate = predicate || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).predicate;
 
             if (finalUrl && finalPredicate) {
-                urlList.push(`PATCH ${finalUrl}\nContent-Type: application/json\n\n${JSON.stringify(task.changes, null, 2)}`);
+                // 在预览中显示，注意这里是 Patch 请求体预览
+                urlList.push(`PATCH ${finalUrl}\nContent-Type: application/json;odata=verbose\n\n${JSON.stringify(task.changes, null, 2)}`);
                 sapUpdates.push({ predicate: finalPredicate, changes: task.changes });
                 csUpdates.push({ predicate: finalPredicate, changes: task.changes });
             } else {
@@ -186,24 +187,30 @@ export const useEntityActions = (
                 
                 // Construct Headers
                 const headers: Record<string, string> = {
-                    'Content-Type': 'application/json',
                     'Accept': 'application/json'
                 };
 
-                // Add Version Headers (Critical for OData)
+                // Add Version & Content-Type Headers (Critical for OData)
                 if (version === 'V4') {
+                    headers['Content-Type'] = 'application/json';
                     headers['OData-Version'] = '4.0';
                     headers['OData-MaxVersion'] = '4.0';
                 } else {
                     // V2/V3 Logic
                     if (version === 'V3') {
-                        // V3 requires explicit 3.0 for DataServiceVersion mostly, especially for JSON Light or writing
+                        // CRITICAL FIX: Use verbose JSON for V3 updates to ensure __metadata is processed
+                        // Standard 'application/json' in V3 defaults to Light, which ignores __metadata
+                        headers['Content-Type'] = isDelete ? 'application/json' : 'application/json;odata=verbose';
+                        
+                        // Explicitly set 3.0 as requested by server error
                         headers['DataServiceVersion'] = '3.0'; 
                         headers['MaxDataServiceVersion'] = '3.0';
-                        // V3 specific Accept header for JSON
-                        headers['Accept'] = 'application/json;odata=minimalmetadata, application/json;odata=verbose, application/json';
+                        
+                        // Use Verbose Accept for V3 to get consistent responses
+                        headers['Accept'] = 'application/json;odata=verbose';
                     } else {
                         // V2 (or Unknown)
+                        headers['Content-Type'] = 'application/json';
                         headers['DataServiceVersion'] = '2.0'; 
                         headers['MaxDataServiceVersion'] = '3.0'; 
                     }
@@ -220,12 +227,13 @@ export const useEntityActions = (
 
                 const res = await fetch(requestUrl, fetchOptions);
                 
+                // 204 No Content is common for OData updates
                 if (res.ok || res.status === 204) {
                     results.push(`SUCCESS (${method}): ${requestUrl}`);
                     successCount++;
                 } else {
                     const errText = await res.text();
-                    results.push(`FAILED (${res.status}): ${requestUrl} - ${errText.substring(0, 100)}...`);
+                    results.push(`FAILED (${res.status}): ${requestUrl} - ${errText.substring(0, 200)}...`);
                 }
             } catch (e: any) {
                 results.push(`ERROR: ${requestUrl} - ${e.message}`);
