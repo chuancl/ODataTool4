@@ -3,6 +3,8 @@ import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from
 import { FileCode, Trash2, Copy, Globe, Terminal, Coffee } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
+import { javascript } from '@codemirror/lang-javascript';
+import { java } from '@codemirror/lang-java';
 import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 
 interface CodeModalProps {
@@ -32,11 +34,33 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
         return codeObj[selectedTab] || '';
     }, [code, isSingleMode, selectedTab]);
 
+    // 根据 Tab 类型动态选择高亮模式
+    const extensions = useMemo(() => {
+        if (isSingleMode) {
+            // 如果是单模式，通常是 MockDataGenerator 里的 SAPUI5 创建代码
+            return [javascript({ jsx: false, typescript: false })];
+        }
+        
+        switch (selectedTab) {
+            case 'sapui5':
+                return [javascript({ jsx: false, typescript: false })];
+            case 'csharp':
+                // C# 语法与 Java 高度相似，CodeMirror 的 java 包能提供很好的高亮支持
+                return [java()];
+            case 'java':
+                return [java()];
+            case 'url':
+            default:
+                // URL 列表通常不是合法的 JSON，使用 json() 会导致报错变红，这里不使用特定 extension
+                return []; 
+        }
+    }, [selectedTab, isSingleMode]);
+
     const handleCopy = () => {
         navigator.clipboard.writeText(currentCodeText);
     };
 
-    // Manual Tab Definition (Safe & Simple) 
+    // Manual Tab Definition (Safe & Simple)
     const tabOptions = [
         { key: 'url', label: 'URL List', icon: Globe },
         { key: 'sapui5', label: 'SAPUI5', icon: FileCode },
@@ -74,7 +98,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                         value={currentCodeText}
                                         height="100%"
                                         className="h-full"
-                                        extensions={[json()]}
+                                        extensions={extensions}
                                         theme={vscodeDark}
                                         readOnly={true}
                                         editable={false}
@@ -109,7 +133,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                             value={currentCodeText}
                                             height="100%"
                                             className="h-full absolute inset-0"
-                                            extensions={[json()]}
+                                            extensions={extensions}
                                             theme={vscodeDark}
                                             readOnly={true}
                                             editable={false}

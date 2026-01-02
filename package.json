@@ -10,6 +10,8 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "@codemirror/lang-java": "^6.0.1",
+    "@codemirror/lang-javascript": "^6.2.2",
     "@codemirror/lang-json": "^6.0.1",
     "@codemirror/lang-xml": "^6.0.2",
     "@faker-js/faker": "^8.4.1",
