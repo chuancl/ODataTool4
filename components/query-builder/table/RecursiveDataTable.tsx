@@ -269,7 +269,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     });
 
     const handleExport = () => {
-        exportToExcel(data, entityName);
+        exportToExcel(data, entityName, toast);
     };
 
     const handleDeleteClick = () => {
@@ -282,6 +282,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     return (
         <div className="h-full flex flex-col bg-content1 overflow-hidden">
             <TableHeader 
+                isRoot={isRoot}
                 isEditing={isEditing}
                 onStartEdit={handleStartEdit}
                 onCancelEdit={handleCancelEdit}

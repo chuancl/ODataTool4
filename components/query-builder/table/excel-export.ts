@@ -1,6 +1,14 @@
 import * as XLSX from 'xlsx';
 import { isExpandableData } from './utils';
 
+// 定义简单的 Toast 接口，避免循环依赖
+interface Toast {
+    success: (msg: string) => void;
+    error: (msg: string) => void;
+    info: (msg: string) => void;
+    warning: (msg: string) => void;
+}
+
 const getEntityNameFromData = (data: any[]): string | null => {
     if (!data || data.length === 0) return null;
     const first = data[0];
@@ -52,13 +60,15 @@ const hasDeepSelection = (data: any): boolean => {
     return false;
 };
 
-export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Main') => {
+export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Main', toast?: Toast) => {
     // 1. 过滤：保留 "自身被勾选" 或 "包含被勾选子项" 的根节点
     // 这样即使父级没勾选，只要子级勾选了，也能进入处理队列
     const rootsToProcess = allRootData.filter(hasDeepSelection);
 
     if (rootsToProcess.length === 0) {
-        alert("没有勾选要导出的数据 (No selected data to export)");
+        const msg = "没有勾选要导出的数据 (No selected data to export)";
+        if (toast) toast.warning(msg);
+        else console.warn(msg);
         return;
     }
 
@@ -173,7 +183,9 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
     });
 
     if (validSheetNames.length === 0) {
-        alert("生成结果为空 (No rows generated)");
+        const msg = "生成结果为空 (No rows generated)";
+        if (toast) toast.warning(msg);
+        else console.warn(msg);
         return;
     }
 
@@ -203,5 +215,10 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
     });
 
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    XLSX.writeFile(wb, `${rootSheetName}_Export_${timestamp}.xlsx`);
+    const filename = `${rootSheetName}_Export_${timestamp}.xlsx`;
+    XLSX.writeFile(wb, filename);
+
+    if (toast) {
+        toast.success(`导出成功: ${filename}\n(Export Successful)`);
+    }
 };

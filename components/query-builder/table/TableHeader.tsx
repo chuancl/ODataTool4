@@ -3,6 +3,7 @@ import { Button, Chip } from "@nextui-org/react";
 import { Trash, Save, Pencil, Check, X } from 'lucide-react';
 
 interface TableHeaderProps {
+    isRoot: boolean;
     isEditing: boolean;
     onStartEdit: () => void;
     onCancelEdit: () => void;
@@ -12,6 +13,7 @@ interface TableHeaderProps {
 }
 
 export const TableHeader: React.FC<TableHeaderProps> = ({
+    isRoot,
     isEditing,
     onStartEdit,
     onCancelEdit,
@@ -19,6 +21,10 @@ export const TableHeader: React.FC<TableHeaderProps> = ({
     onDelete,
     onExport
 }) => {
+    // 如果不是根表，不显示任何操作按钮和表头条
+    // Sub-tables should not show modify/delete/export buttons.
+    if (!isRoot) return null;
+
     return (
         <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-between shrink-0 h-12">
              <div className="flex items-center gap-2">
