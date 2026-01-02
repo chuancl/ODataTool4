@@ -155,12 +155,10 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     const handleStartEdit = () => {
         const selectedCount = Object.keys(rowSelection).length;
         if (selectedCount === 0) {
-            alert("请先勾选需要修改的行");
+            alert("请先勾选需要修改的行 (Please select rows to modify first)");
             return;
         }
         setIsEditing(true);
-        // Initialize draft with current values for selected rows? 
-        // No need, we fallback to original value if draft is missing.
     };
 
     const handleCancelEdit = () => {
@@ -175,16 +173,15 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         const changedIndices = Object.keys(editDraft).map(Number);
         
         changedIndices.forEach(idx => {
-            // Only process if row is still selected
             if (rowSelection[idx]) {
                 const originalItem = data[idx];
                 const changes = editDraft[idx];
                 
-                // Calculate actual Diff
                 const realChanges: any = {};
                 let hasChanges = false;
                 Object.entries(changes).forEach(([key, newVal]) => {
-                    if (originalItem[key] != newVal) { // loose comparison for string/number match
+                    // Simple loose equality check
+                    if (originalItem[key] != newVal) {
                         realChanges[key] = newVal;
                         hasChanges = true;
                     }
@@ -202,6 +199,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         }
 
         onUpdate(updates);
+        // Do not auto close edit mode here; let parent handle refresh/success
     };
 
     const handleInputChange = (rowIndex: number, columnId: string, value: string) => {
@@ -366,9 +364,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 ),
                 cell: info => {
                     const isSelected = info.row.getIsSelected();
-                    // 仅当开启编辑模式、当前行被选中、且值不是复杂对象时，渲染输入框
                     const value = info.getValue();
-                    const isEditable = isEditing && isSelected && !isExpandableData(value) && !isPK; // Usually don't edit PKs
+                    const isEditable = isEditing && isSelected && !isExpandableData(value) && !isPK;
 
                     if (isEditable) {
                          const currentDraft = editDraft[info.row.index]?.[key];
@@ -406,7 +403,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
     }, [data, containerWidth, pkSet, fkSet, fkInfoMap, isEditing, editDraft]);
 
-    // Sync column order but prevent "Column not found" warnings
+    // Sync column order
     useEffect(() => {
         if (columns.length > 0) {
             const validIds = new Set(columns.map(c => c.id));
@@ -463,15 +460,15 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         <div className="h-full flex flex-col bg-content1 overflow-hidden">
             <div className="bg-default-50 p-2 flex gap-2 border-b border-divider items-center justify-between shrink-0 h-12">
                  <div className="flex items-center gap-2">
-                    {/* Header Left Content if any */}
+                    {/* Header Left Content */}
                     {isEditing && (
                         <Chip size="sm" color="warning" variant="flat" className="animate-pulse">编辑模式 (Editing)</Chip>
                     )}
                  </div>
                  
                  <div className="flex gap-2">
-                    {/* Edit Actions */}
-                    {onUpdate && !isEditing && (
+                    {/* Explicit check for onUpdate function presence */}
+                    {!!onUpdate && !isEditing && (
                          <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
                              修改 (Modify)
                          </Button>
@@ -488,10 +485,9 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                         </>
                     )}
                     
-                    {/* Standard Actions (Hide when editing to prevent confusion) */}
                     {!isEditing && (
                         <>
-                            {onDelete && <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
+                            {!!onDelete && <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>删除 (Delete)</Button>}
                             {isRoot && <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>导出 Excel</Button>}
                         </>
                     )}
@@ -606,7 +602,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                                 parentSelected={row.getIsSelected()} 
                                                 schema={schema} 
                                                 parentEntityName={entityName}
-                                                onUpdate={onUpdate} // Pass it down to nested tables
+                                                onUpdate={onUpdate} 
                                             />
                                         </td>
                                     </tr>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from "@nextui-org/react";
-import { FileCode, Trash2, Copy, Globe, Terminal, Coffee } from 'lucide-react';
+import { FileCode, Trash2, Copy, Globe, Terminal, Coffee, Check } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { javascript } from '@codemirror/lang-javascript';
@@ -10,7 +10,6 @@ import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 interface CodeModalProps {
     isOpen: boolean;
     onOpenChange: (open: boolean) => void;
-    // code can be a string (single view) or an object (multi-tab)
     code: string | { url: string, sapui5: string, csharp: string, java: string };
     action: 'delete' | 'update' | 'create';
     onExecute: () => void;
@@ -19,7 +18,6 @@ interface CodeModalProps {
 export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code, action, onExecute }) => {
     const [selectedTab, setSelectedTab] = useState<string>('url');
 
-    // 每次打开时重置 Tab 到默认值
     useEffect(() => {
         if (isOpen) {
             setSelectedTab('url');
@@ -34,25 +32,13 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
         return codeObj[selectedTab] || '';
     }, [code, isSingleMode, selectedTab]);
 
-    // 根据 Tab 类型动态选择高亮模式
     const extensions = useMemo(() => {
-        if (isSingleMode) {
-            // 如果是单模式，通常是 MockDataGenerator 里的 SAPUI5 创建代码
-            return [javascript({ jsx: false, typescript: false })];
-        }
-        
+        if (isSingleMode) return [javascript({ jsx: false, typescript: false })];
         switch (selectedTab) {
-            case 'sapui5':
-                return [javascript({ jsx: false, typescript: false })];
-            case 'csharp':
-                // C# 语法与 Java 高度相似，CodeMirror 的 java 包能提供很好的高亮支持
-                return [java()];
-            case 'java':
-                return [java()];
-            case 'url':
-            default:
-                // URL 列表通常不是合法的 JSON，使用 json() 会导致报错变红，这里不使用特定 extension
-                return []; 
+            case 'sapui5': return [javascript({ jsx: false, typescript: false })];
+            case 'csharp': return [java()];
+            case 'java': return [java()];
+            case 'url': default: return []; 
         }
     }, [selectedTab, isSingleMode]);
 
@@ -60,7 +46,6 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
         navigator.clipboard.writeText(currentCodeText);
     };
 
-    // Manual Tab Definition (Safe & Simple)
     const tabOptions = [
         { key: 'url', label: 'URL List', icon: Globe },
         { key: 'sapui5', label: 'SAPUI5', icon: FileCode },
@@ -81,7 +66,9 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                     <>
                         <ModalHeader className="flex gap-2 items-center border-b border-divider">
                             <FileCode className="text-primary" />
-                            {action === 'delete' ? '确认删除 (Confirm Delete)' : `代码预览 (${action})`}
+                            {action === 'delete' ? '确认删除 (Confirm Delete)' : 
+                             action === 'update' ? '确认更新 (Confirm Update)' : 
+                             `代码预览 (${action})`}
                         </ModalHeader>
                         <ModalBody className="p-0 bg-[#1e1e1e] flex flex-col min-h-[400px]">
                             {action === 'delete' && (
@@ -89,6 +76,13 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                     警告: 您即将执行 DELETE 操作。以下是生成的代码供参考。
                                     <br/>
                                     Warning: You are about to DELETE data. Review the code snippets below.
+                                </div>
+                            )}
+                            {action === 'update' && (
+                                <div className="p-4 pb-0 text-sm text-primary-500 font-bold bg-background shrink-0">
+                                    提示: 您即将执行 PATCH 操作更新数据。以下是生成的变更代码。
+                                    <br/>
+                                    Info: You are about to UPDATE data. Review the generated PATCH code below.
                                 </div>
                             )}
 
@@ -106,7 +100,6 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                 </div>
                             ) : (
                                 <div className="flex flex-col h-[500px]">
-                                    {/* Custom Tabs Header - Replaces NextUI Tabs to prevent unmounting bugs */}
                                     <div className="bg-[#252526] border-b border-white/10 px-4 shrink-0 flex gap-6 select-none">
                                         {tabOptions.map((item) => (
                                             <button
@@ -129,7 +122,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
 
                                     <div className="flex-1 overflow-hidden relative">
                                         <CodeMirror
-                                            key={selectedTab} // Force remount on tab switch
+                                            key={selectedTab} 
                                             value={currentCodeText}
                                             height="100%"
                                             className="h-full absolute inset-0"
@@ -144,8 +137,8 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                         </ModalBody>
                         <ModalFooter className="border-t border-divider bg-background">
                             <div className="flex-1">
-                                {action === 'delete' && (
-                                     <span className="text-xs text-default-400">点击 "Copy" 复制当前标签页代码。点击 "Execute" 在此工具中运行删除。</span>
+                                {(action === 'delete' || action === 'update') && (
+                                     <span className="text-xs text-default-400">点击 "Copy" 复制当前标签页代码。点击 "Execute" 在此工具中运行操作。</span>
                                 )}
                             </div>
                             <Button color="default" variant="light" onPress={onClose}>取消 (Cancel)</Button>
@@ -154,9 +147,13 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onOpenChange, code
                                 复制 (Copy Code)
                             </Button>
 
-                            {action === 'delete' && (
-                                <Button color="danger" onPress={() => { onExecute(); onClose(); }} startContent={<Trash2 size={16}/>}>
-                                    确认执行删除 (Execute Delete)
+                            {(action === 'delete' || action === 'update') && (
+                                <Button 
+                                    color={action === 'delete' ? "danger" : "primary"} 
+                                    onPress={() => { onExecute(); onClose(); }} 
+                                    startContent={action === 'delete' ? <Trash2 size={16}/> : <Check size={16}/>}
+                                >
+                                    {action === 'delete' ? "确认执行删除 (Execute Delete)" : "确认执行更新 (Execute Update)"}
                                 </Button>
                             )}
                         </ModalFooter>
