@@ -58,8 +58,27 @@ export const useODataQuery = (version: ODataVersion) => {
                 if (response.ok) {
                     try {
                         const data = JSON.parse(text);
-                        // 兼容多种 OData 返回格式
-                        const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
+                        
+                        // --- 兼容多种 OData 返回格式 (Robust Parsing) ---
+                        let results: any[] = [];
+
+                        if (data.value && Array.isArray(data.value)) {
+                            // V4 Standard: { value: [...] }
+                            results = data.value;
+                        } else if (data.d) {
+                            // V2/V3 Wrapper
+                            if (Array.isArray(data.d)) {
+                                // V3/JSON Light: { d: [...] }
+                                results = data.d;
+                            } else if (data.d.results && Array.isArray(data.d.results)) {
+                                // V2/V3 Verbose: { d: { results: [...] } }
+                                results = data.d.results;
+                            }
+                        } else if (Array.isArray(data)) {
+                            // Raw Array: [...]
+                            results = data;
+                        }
+                        
                         setQueryResult(results);
                         setRawJsonResult(JSON.stringify(data, null, 2));
                         
