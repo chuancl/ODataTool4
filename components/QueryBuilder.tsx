@@ -256,34 +256,106 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       }
   };
 
+  /**
+   * 递归辅助函数：从整个 queryResult 树中收集所有被标记为 __selected 的项
+   * 这解决了子表数据未被“顶层 handleDelete”捕获的问题
+   */
+  const collectAllSelectedItems = (data: any[]): any[] => {
+      const selected: any[] = [];
+      
+      const traverse = (node: any) => {
+          if (Array.isArray(node)) {
+              node.forEach(traverse);
+          } else if (typeof node === 'object' && node !== null) {
+              // 1. 检查当前节点是否选中
+              if (node['__selected'] === true) {
+                  selected.push(node);
+              }
+              // 2. 递归检查子属性 (OData 关联/扩展)
+              Object.entries(node).forEach(([key, val]) => {
+                  if (key !== '__metadata' && key !== '__deferred') {
+                      if (Array.isArray(val) || (typeof val === 'object' && val !== null)) {
+                          // 特殊处理 V2 结果包装 { results: [...] }
+                          if (val && (val as any).results && Array.isArray((val as any).results)) {
+                              traverse((val as any).results);
+                          } else {
+                              traverse(val);
+                          }
+                      }
+                  }
+              });
+          }
+      };
+
+      traverse(data);
+      return selected;
+  };
+
   // 点击删除按钮触发（准备阶段）
-  const handleDelete = (selectedItems: any[]) => {
-    if (!selectedItems || selectedItems.length === 0) {
+  // 注意：不再依赖传入的 selectedItems (仅含顶层)，而是重新全量扫描
+  const handleDelete = () => {
+    // 1. 全局递归收集所有选中项 (包含嵌套子表)
+    const allSelectedItems = collectAllSelectedItems(queryResult);
+
+    if (!allSelectedItems || allSelectedItems.length === 0) {
         alert("请先勾选需要删除的数据 (Please select rows to delete first)");
         return;
     }
 
-    setItemsToDelete(selectedItems);
+    setItemsToDelete(allSelectedItems);
     
-    // 收集所有需要删除的 Key Predicate
+    // 收集所有需要删除的 Key Predicate 和 完整 URL
     const predicates: string[] = [];
     const urlList: string[] = [];
     const baseUrl = url.endsWith('/') ? url : `${url}/`;
 
-    selectedItems.forEach(item => {
-        const pred = getKeyPredicate(item);
-        if (pred) {
-            predicates.push(pred);
-            urlList.push(`DELETE ${baseUrl}${selectedEntity}${pred}`);
+    allSelectedItems.forEach(item => {
+        // --- 核心：确定删除 URL ---
+        // 优先使用 OData Metadata 中的 Self Link，这对于删除子表数据（EntitySet 不同）至关重要
+        let explicitUri = null;
+
+        // V2 Metadata
+        if (item.__metadata && item.__metadata.uri) {
+            explicitUri = item.__metadata.uri;
+        }
+        // V4 Context/ID
+        else if (item['@odata.id']) {
+            // @odata.id 可能是绝对路径或相对路径
+            explicitUri = item['@odata.id'];
+            if (explicitUri && !explicitUri.startsWith('http')) {
+                explicitUri = `${url.replace(/\/$/, '')}/${explicitUri.replace(/^\//, '')}`;
+            }
+        }
+        else if (item['@odata.editLink']) {
+            explicitUri = item['@odata.editLink'];
+             if (explicitUri && !explicitUri.startsWith('http')) {
+                explicitUri = `${url.replace(/\/$/, '')}/${explicitUri.replace(/^\//, '')}`;
+            }
+        }
+
+        if (explicitUri) {
+             urlList.push(`DELETE ${explicitUri}`);
+             // 尝试从 URI 提取谓词用于展示 (e.g. Products(1))
+             const match = explicitUri.match(/\/([^\/]+\(.+\))$/);
+             if (match) predicates.push(match[1]);
+             else predicates.push(`(From URI)`);
         } else {
-            urlList.push(`// SKIP: Cannot find key for item: ${JSON.stringify(item)}`);
+            // 回退逻辑：仅适用于顶层实体（因为我们知道 selectedEntity）
+            // 如果是子项且无 metadata，这里生成的 URL 可能是错误的（使用了父级 EntitySet）
+            const pred = getKeyPredicate(item);
+            if (pred) {
+                predicates.push(pred);
+                urlList.push(`DELETE ${baseUrl}${selectedEntity}${pred}  // Warning: Inferred path`);
+            } else {
+                urlList.push(`// SKIP: Cannot determine DELETE URL for item`);
+            }
         }
     });
 
     // 1. URL List Code
     const codeUrl = urlList.join('\n');
 
-    // 2. SAPUI5 Code
+    // 2. SAPUI5 Code (Demo using generic predicates)
     const codeSap = generateSAPUI5Code('delete', selectedEntity, { keyPredicates: predicates }, version);
 
     // 3. C# Code (Pass version)
@@ -314,23 +386,37 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
       let successCount = 0;
 
       for (const item of itemsToDelete) {
-          const predicate = getKeyPredicate(item);
-          if (!predicate) {
-              results.push(`SKIP: No Key found for item`);
+          // 同样的逻辑：优先寻找 Metadata URI
+          let deleteUrl = '';
+          
+          if (item.__metadata && item.__metadata.uri) {
+              deleteUrl = item.__metadata.uri;
+          } else if (item['@odata.id']) {
+              deleteUrl = item['@odata.id'];
+              if (!deleteUrl.startsWith('http')) deleteUrl = `${url.replace(/\/$/, '')}/${deleteUrl.replace(/^\//, '')}`;
+          } else {
+              // Fallback
+              const predicate = getKeyPredicate(item);
+              if (predicate) {
+                  deleteUrl = `${baseUrl}${selectedEntity}${predicate}`;
+              }
+          }
+
+          if (!deleteUrl) {
+              results.push(`SKIP: Unable to determine DELETE URL for item`);
               continue;
           }
 
-          const deleteUrl = `${baseUrl}${selectedEntity}${predicate}`;
           try {
               const res = await fetch(deleteUrl, { method: 'DELETE' });
               if (res.ok) {
-                  results.push(`SUCCESS: ${predicate}`);
+                  results.push(`SUCCESS: ${deleteUrl}`);
                   successCount++;
               } else {
-                  results.push(`FAILED (${res.status}): ${predicate} - ${res.statusText}`);
+                  results.push(`FAILED (${res.status}): ${deleteUrl} - ${res.statusText}`);
               }
           } catch (e: any) {
-              results.push(`ERROR: ${predicate} - ${e.message}`);
+              results.push(`ERROR: ${deleteUrl} - ${e.message}`);
           }
       }
 
@@ -412,7 +498,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           rawXmlResult={rawXmlResult}
           loading={loading}
           isDark={isDark}
-          onDelete={handleDelete} // 传递新的处理函数
+          onDelete={handleDelete} // 传递新的处理函数 
           onExport={() => {}} 
           downloadFile={downloadFile}
           entityName={selectedEntity}
