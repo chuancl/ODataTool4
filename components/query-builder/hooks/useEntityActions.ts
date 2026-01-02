@@ -89,14 +89,34 @@ export const useEntityActions = (
         const sapUpdates: any[] = [];
         const csUpdates: any[] = [];
 
-        // 将 Update 数据转换为处理任务
-        const tasks: (EntityContextTask & { changes?: any })[] = updates.map(u => ({
-            item: u.item,
-            changes: u.changes,
-            // 尝试推断 EntitySet，如果没有 Metadata，默认使用 selectedEntity (如果是Root)
-            entitySet: selectedEntity, 
-            entityType: currentSchema
-        }));
+        // 将 Update 数据转换为处理任务，并注入类型信息
+        const tasks: (EntityContextTask & { changes?: any })[] = updates.map(u => {
+            // 复制变更数据
+            const payload = { ...u.changes };
+
+            // --- 关键修复：注入类型信息 ---
+            // 解决 "Type information must be specified for types that take part in inheritance" 错误
+            // OData V2/V3 需要 __metadata: { type: ... }
+            if (version !== 'V4') {
+                if (u.item.__metadata?.type) {
+                    payload.__metadata = { type: u.item.__metadata.type };
+                }
+            } 
+            // OData V4 需要 @odata.type
+            else {
+                if (u.item['@odata.type']) {
+                    payload['@odata.type'] = u.item['@odata.type'];
+                }
+            }
+
+            return {
+                item: u.item,
+                changes: payload, // 使用带有类型信息的 Payload 作为 changes
+                // 尝试推断 EntitySet，如果没有 Metadata，默认使用 selectedEntity (如果是Root)
+                entitySet: selectedEntity, 
+                entityType: currentSchema
+            };
+        });
 
         tasks.forEach(task => {
             // resolveItemUri 会尝试从 __metadata 或 @odata.id 恢复正确的 Context
