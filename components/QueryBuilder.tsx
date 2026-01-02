@@ -158,6 +158,7 @@ const QueryBuilder: React.FC<Props> = ({ url, version, isDark, schema }) => {
           loading={loading || isExecuting}
           isDark={isDark}
           onDelete={() => prepareDelete(queryResult)} // 触发删除流程
+          onUpdate={prepareUpdate} // 触发更新流程
           onExport={() => {}} 
           downloadFile={downloadFile}
           entityName={selectedEntity}
