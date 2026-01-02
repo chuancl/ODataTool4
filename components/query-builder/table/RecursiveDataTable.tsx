@@ -467,8 +467,15 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                  </div>
                  
                  <div className="flex gap-2">
-                    {/* --- Editing Actions --- */}
-                    {isEditing ? (
+                    {/* 1. Modify Button: Only hidden if already in edit mode (to switch to Update/Cancel) */}
+                    {!isEditing && (
+                        <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
+                            修改 (Modify)
+                        </Button>
+                    )}
+
+                    {/* 2. Update/Cancel Buttons: Only visible in edit mode */}
+                    {isEditing && (
                         <>
                             <Button size="sm" color="success" variant="solid" className="text-white" onPress={handleConfirmUpdate} startContent={<Check size={14} />}>
                                 更新 (Update)
@@ -477,28 +484,17 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                                 取消 (Cancel)
                             </Button>
                         </>
-                    ) : (
-                        <>
-                            {/* Standard Actions */}
-                            {onUpdate && (
-                                <Button size="sm" variant="flat" onPress={handleStartEdit} startContent={<Pencil size={14} />}>
-                                    修改 (Modify)
-                                </Button>
-                            )}
-
-                            {!!onDelete && (
-                                <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>
-                                    删除 (Delete)
-                                </Button>
-                            )}
-
-                            {isRoot && (
-                                <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>
-                                    导出 Excel
-                                </Button>
-                            )}
-                        </>
                     )}
+                    
+                    {/* 3. Delete Button: Always visible */}
+                    <Button size="sm" color="danger" variant="light" onPress={handleDeleteClick} startContent={<Trash size={14} />}>
+                        删除 (Delete)
+                    </Button>
+
+                    {/* 4. Export Button: Always visible */}
+                    <Button size="sm" color="primary" variant="light" onPress={handleExport} startContent={<Save size={14} />}>
+                        导出 Excel
+                    </Button>
                 </div>
             </div>
 
