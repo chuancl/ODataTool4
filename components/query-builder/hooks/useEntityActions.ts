@@ -90,24 +90,19 @@ export const useEntityActions = (
         const csUpdates: any[] = [];
 
         // 将 Update 数据转换为处理任务
-        // 注意：这里我们主要处理 Root Entity 或明确传递了 Context 的数据
-        // 如果是从嵌套表格传来的，item 中通常应该包含足够的 metadata 供 resolveItemUri 使用
         const tasks: (EntityContextTask & { changes?: any })[] = updates.map(u => ({
             item: u.item,
             changes: u.changes,
             // 尝试推断 EntitySet，如果没有 Metadata，默认使用 selectedEntity (如果是Root)
-            // 更好的方式是 update 对象里携带了 entityContext
             entitySet: selectedEntity, 
             entityType: currentSchema
         }));
 
         tasks.forEach(task => {
             // resolveItemUri 会尝试从 __metadata 或 @odata.id 恢复正确的 Context
-            // 如果 item 来自子表，它应该有 metadata
             const { url: requestUrl, predicate } = resolveItemUri(task.item, baseUrl, null, null);
 
             // 如果无法从 Item 自身解析，尝试使用传入的 selectedEntity (仅适用于 Root 表)
-            // 这里有优化空间：RecursiveDataTable 可以传递 EntitySet Name
             const finalUrl = requestUrl || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).url;
             const finalPredicate = predicate || resolveItemUri(task.item, baseUrl, selectedEntity, currentSchema).predicate;
 
@@ -115,11 +110,8 @@ export const useEntityActions = (
                 urlList.push(`PATCH ${finalUrl}\nContent-Type: application/json\n\n${JSON.stringify(task.changes, null, 2)}`);
                 sapUpdates.push({ predicate: finalPredicate, changes: task.changes });
                 csUpdates.push({ predicate: finalPredicate, changes: task.changes });
-                
-                // 更新 task 的解析结果以便执行时使用
-                // Hack: store resolved URL on task item temporarily or rely on re-resolve
             } else {
-                urlList.push(`// SKIP: Cannot determine URL for item`);
+                urlList.push(`// SKIP: Cannot determine URL for item. Missing Metadata or Key.`);
             }
         });
 
@@ -138,6 +130,8 @@ export const useEntityActions = (
                 java: codeJava
             }
         });
+        
+        // 确保打开模态框
         onOpen();
 
     }, [url, version, selectedEntity, currentSchema, onOpen]);
@@ -168,7 +162,7 @@ export const useEntityActions = (
 
             try {
                 const isDelete = state.modalAction === 'delete';
-                const method = isDelete ? 'DELETE' : 'PATCH'; // OData V2 usually accepts MERGE or PUT, but PATCH is standard for V3/V4. V2 often supports PATCH via X-HTTP-Method-Override or configuration.
+                const method = isDelete ? 'DELETE' : 'PATCH'; 
                 
                 const fetchOptions: RequestInit = {
                     method: method,
@@ -198,7 +192,7 @@ export const useEntityActions = (
 
         setRawJsonResult(`// 批量操作报告 (Batch Operation Report):\n// 成功: ${successCount}, 失败: ${state.itemsToProcess.length - successCount}\n\n${results.join('\n')}`);
         
-        // 只有当有成功操作时才刷新，或者总是刷新？总是刷新比较好，以反映最新状态
+        // 操作后刷新
         await refreshQuery(); 
         
         setIsExecuting(false);

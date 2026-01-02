@@ -132,7 +132,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
 
     // --- Edit Handlers ---
     const handleStartEdit = () => {
-        // const selectedCount = Object.keys(rowSelection).length;
         setIsEditing(true);
     };
 
@@ -142,20 +141,26 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     };
 
     const handleConfirmUpdate = () => {
-        if (!onUpdate) return;
+        if (!onUpdate) {
+            console.error("No onUpdate handler provided");
+            return;
+        }
         
         const updates: { item: any, changes: any }[] = [];
         const changedIndices = Object.keys(editDraft).map(Number);
         
         changedIndices.forEach(idx => {
-            // 只有当行被选中时才提交更新
-            if (rowSelection[idx]) {
+            // Check row selection (handle both number and string keys)
+            const isSelected = rowSelection[idx] === true || rowSelection[String(idx)] === true;
+
+            if (isSelected) {
                 const originalItem = data[idx];
                 const changes = editDraft[idx];
                 
                 const realChanges: any = {};
                 let hasChanges = false;
                 Object.entries(changes).forEach(([key, newVal]) => {
+                    // Loose equality check to handle string vs number inputs
                     if (originalItem[key] != newVal) {
                         realChanges[key] = newVal;
                         hasChanges = true;
@@ -191,7 +196,8 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         }));
         
         // 自动选中正在修改的行 (Auto-select row on edit)
-        if (!rowSelection[rowIndex]) {
+        // Check if already selected (handle both keys)
+        if (!rowSelection[rowIndex] && !rowSelection[String(rowIndex)]) {
             setRowSelection(prev => ({ ...prev, [rowIndex]: true }));
             // 同时也更新数据源标记，以便导出等功能感知
             updateRecursiveSelection(data[rowIndex], true);
