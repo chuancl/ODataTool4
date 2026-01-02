@@ -15,48 +15,68 @@ const getEntityNameFromData = (data: any[]): string | null => {
     return null;
 };
 
-// 辅助：判断行是否应被导出
-// 如果 __selected 为 true (显式选中)，则导出
-// 如果 __selected 未定义 (undefined)，我们假设如果其父级被处理了，则默认逻辑可能根据业务需求
-// 在本需求中：严格按照 "勾选的数据导出"，意味着必须 __selected === true (或者没有 checkbox 的情况下默认全导?)
-// 结合 RecursiveDataTable 的逻辑，Checkbox 默认未选中。
 const isRowSelected = (row: any) => {
     return row['__selected'] === true;
 };
 
-export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Main') => {
-    // 1. 过滤根级数据：只保留被勾选的
-    const selectedRootData = allRootData.filter(isRowSelected);
+// 递归检查当前节点或其子节点是否有被勾选的项
+const hasDeepSelection = (data: any): boolean => {
+    if (!data) return false;
+    
+    // 数组：检查任意元素
+    if (Array.isArray(data)) {
+        return data.some(hasDeepSelection);
+    }
+    
+    // V2 { results: ... } 包装器
+    if (typeof data === 'object' && data.results && Array.isArray(data.results)) {
+        return data.results.some(hasDeepSelection);
+    }
 
-    if (selectedRootData.length === 0) {
+    // 对象：检查自身或属性
+    if (typeof data === 'object') {
+        // 1. 自身被勾选
+        if (data['__selected'] === true) return true;
+        
+        // 2. 检查子属性 (Navigation Properties)
+        return Object.entries(data).some(([key, val]) => {
+            if (key === '__metadata' || key === '__deferred' || key === '__selected') return false;
+            // 只有可展开的数据才可能包含子选中项
+            if (isExpandableData(val)) {
+                return hasDeepSelection(val);
+            }
+            return false;
+        });
+    }
+    
+    return false;
+};
+
+export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Main') => {
+    // 1. 过滤：保留 "自身被勾选" 或 "包含被勾选子项" 的根节点
+    // 这样即使父级没勾选，只要子级勾选了，也能进入处理队列
+    const rootsToProcess = allRootData.filter(hasDeepSelection);
+
+    if (rootsToProcess.length === 0) {
         alert("没有勾选要导出的数据 (No selected data to export)");
         return;
     }
 
     const wb = XLSX.utils.book_new();
-    
-    // 全局 ID 计数器，用于生成关联 ID (虽然不导出，但内部逻辑需要用它来分组子项)
     let globalIdCounter = 1;
 
-    // --- 数据聚合映射 ---
-    // Key: Sheet Name (e.g. "Main", "Orders", "OrderItems")
-    // Value: Array of rows to be written to that sheet
     const sheetsMap: Map<string, any[]> = new Map();
 
-    // 初始 Sheet 名
+    // 确定根 Sheet 名称
     let rootSheetName = defaultRootName;
-    const detectedRoot = getEntityNameFromData(selectedRootData);
+    const detectedRoot = getEntityNameFromData(rootsToProcess);
     if (detectedRoot) rootSheetName = detectedRoot;
 
-    // 广度优先搜索 (BFS) 队列
-    // 每个任务包含：
-    // - data: 要处理的数据行数组
-    // - sheetName: 这些行应该去的 Sheet 名称
-    // - parentIds: 对应 data 数组中每一行的父级 ID (如果是根节点则为 null)
+    // 队列任务：处理这批数据，将选中的行写入 sheetName
     const queue = [{ 
-        data: selectedRootData, 
+        data: rootsToProcess, 
         sheetName: rootSheetName, 
-        parentIds: new Array(selectedRootData.length).fill(null) 
+        parentIds: new Array(rootsToProcess.length).fill(null) 
     }];
 
     while (queue.length > 0) {
@@ -64,92 +84,79 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
         
         if (data.length === 0) continue;
 
-        // 确保 Sheet 存在
         if (!sheetsMap.has(sheetName)) {
             sheetsMap.set(sheetName, []);
         }
         const currentSheetRows = sheetsMap.get(sheetName)!;
 
-        // 临时存储下一层的任务： Key = 子 Sheet 名, Value = { rows: [], parentIds: [] }
+        // 下一层任务暂存
         const nextLevelTasks: Map<string, { rows: any[], parentIds: any[] }> = new Map();
 
-        // 遍历当前批次的数据行
         data.forEach((row, idx) => {
+            const isSelfSelected = isRowSelected(row);
             const flatRow: any = {};
-            const myId = globalIdCounter++; // 为当前行分配唯一 ID，用于内部子项关联，但不写入 Excel
+            const myId = globalIdCounter++; 
             
-            // [已修改] 不再写入系统字段 (__Export_ID, __Parent_ID) 以保持 Excel 纯净
-            // flatRow['__Export_ID'] = myId;
-            // if (parentIds[idx] !== null) {
-            //     flatRow['__Parent_ID'] = parentIds[idx];
-            // }
-
-            // 遍历属性
+            // 遍历属性：同时负责 "构建当前行数据" 和 "发现子任务"
             Object.entries(row).forEach(([key, val]) => {
                 if (key === '__metadata' || key === '__deferred' || key === '__selected') return;
 
                 if (isExpandableData(val)) {
-                    // === 处理嵌套数据 ===
+                    // === 处理嵌套/关联数据 ===
                     
-                    // Case A: 数组 (1:N) -> 放入下一层队列
-                    // 只有当 val (子数组) 存在且长度 > 0 时处理
+                    // 标准化为数组，统一处理 1:N (Array) 和 1:1 (Object)
                     let childDataArray: any[] = [];
                     if (Array.isArray(val)) {
                         childDataArray = val;
                     } else if (val && Array.isArray((val as any).results)) {
                         childDataArray = (val as any).results;
+                    } else if (val && typeof val === 'object') {
+                        // 1:1 关系：作为单元素数组处理，以便放入独立 Sheet
+                        childDataArray = [val];
                     }
 
-                    // *** 关键：只处理勾选的子项 ***
-                    const selectedChildData = childDataArray.filter(isRowSelected);
+                    // 筛选：只保留 "自身勾选" 或 "有勾选子项" 的子节点进行递归
+                    const itemsToTraverse = childDataArray.filter(hasDeepSelection);
 
-                    if (selectedChildData.length > 0) {
+                    if (itemsToTraverse.length > 0) {
                         // 确定子 Sheet 名称
-                        let childSheetName = key; // 默认为属性名 (如 "Items")
-                        const detectedChildEntity = getEntityNameFromData(selectedChildData);
-                        if (detectedChildEntity) childSheetName = detectedChildEntity; // 优先用实体名 (如 "OrderItem")
+                        let childSheetName = key; 
+                        const detectedChildEntity = getEntityNameFromData(itemsToTraverse);
+                        if (detectedChildEntity) childSheetName = detectedChildEntity; 
 
-                        // 将这些子项加入下一层任务
+                        // 加入下一层队列
                         if (!nextLevelTasks.has(childSheetName)) {
                             nextLevelTasks.set(childSheetName, { rows: [], parentIds: [] });
                         }
                         const task = nextLevelTasks.get(childSheetName)!;
                         
-                        // 添加数据和对应的父ID
-                        task.rows.push(...selectedChildData);
-                        // 为这批子项每一个都添加当前行的 ID 作为父 ID
-                        selectedChildData.forEach(() => task.parentIds.push(myId));
+                        task.rows.push(...itemsToTraverse);
+                        itemsToTraverse.forEach(() => task.parentIds.push(myId));
 
-                        // 在当前行标记
-                        flatRow[key] = `[Sheet: ${childSheetName}]`;
-                    } else if (childDataArray.length > 0) {
-                         // 有数据但没勾选
+                        // 如果当前行要导出，写入链接标记
+                        if (isSelfSelected) {
+                            flatRow[key] = `[Sheet: ${childSheetName}]`;
+                        }
+                    } else if (isSelfSelected && childDataArray.length > 0) {
+                         // 有数据但没勾选任何项
                          flatRow[key] = `[0 Selected]`;
-                    }
-
-                    // Case B: 对象 (1:1) -> 扁平化到当前行 (简单处理)
-                    // 如果对象也有 __selected 逻辑，这里简化为只要父级选了，内嵌对象就展开
-                    else if (typeof val === 'object' && !Array.isArray(val)) {
-                        Object.entries(val).forEach(([subKey, subVal]) => {
-                            if (subKey !== '__metadata' && subKey !== '__deferred') {
-                                if (typeof subVal === 'object' && subVal !== null) {
-                                    flatRow[`${key}.${subKey}`] = JSON.stringify(subVal);
-                                } else {
-                                    flatRow[`${key}.${subKey}`] = subVal;
-                                }
-                            }
-                        });
                     }
                 } else {
                     // === 处理基本类型 ===
-                    flatRow[key] = val;
+                    // 只有当前行被勾选时，才收集属性值
+                    if (isSelfSelected) {
+                        flatRow[key] = val;
+                    }
                 }
             });
 
-            currentSheetRows.push(flatRow);
+            // 只有当前行被勾选时，才加入 Sheet
+            if (isSelfSelected) {
+                currentSheetRows.push(flatRow);
+            }
         });
 
-        // 将生成的下一层任务加入主队列
+        // 将新任务加入主队列
         nextLevelTasks.forEach((task, nextSheetName) => {
             queue.push({
                 data: task.rows,
@@ -160,20 +167,27 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
     }
 
     // --- 生成 Excel Sheets ---
-    // 为了美观，先处理 Main sheet，然后是其他
-    const sortedSheetNames = Array.from(sheetsMap.keys()).sort((a, b) => {
+    // 过滤掉没有任何选中行的 Sheet
+    const validSheetNames = Array.from(sheetsMap.keys()).filter(name => {
+        return sheetsMap.get(name)!.length > 0;
+    });
+
+    if (validSheetNames.length === 0) {
+        alert("生成结果为空 (No rows generated)");
+        return;
+    }
+
+    const sortedSheetNames = validSheetNames.sort((a, b) => {
         if (a === rootSheetName) return -1;
         if (b === rootSheetName) return 1;
         return a.localeCompare(b);
     });
 
-    // Excel Sheet 名称有 31 字符限制，且不能重复
     const finalSheetNames = new Set<string>();
     
     sortedSheetNames.forEach(rawName => {
-        let validName = rawName.substring(0, 31).replace(/[:\\\/?*\[\]]/g, "_"); // 移除非法字符
+        let validName = rawName.substring(0, 31).replace(/[:\\\/?*\[\]]/g, "_");
         
-        // 处理重名
         if (finalSheetNames.has(validName)) {
             let counter = 1;
             while (finalSheetNames.has(`${validName.substring(0, 28)}_${counter}`)) {
@@ -188,7 +202,6 @@ export const exportToExcel = (allRootData: any[], defaultRootName: string = 'Mai
         XLSX.utils.book_append_sheet(wb, ws, validName);
     });
 
-    // 导出文件
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     XLSX.writeFile(wb, `${rootSheetName}_Export_${timestamp}.xlsx`);
 };
