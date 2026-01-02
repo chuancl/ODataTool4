@@ -15,15 +15,13 @@ export const useODataQuery = (version: ODataVersion) => {
         setQueryResult([]);
 
         try {
-            // --- 强制缓存穿透 (Cache Busting) ---
-            // 追加唯一的 _t 时间戳参数，强制每次请求都视为新请求
-            // 这有助于解决部分 OData 服务端对相同 URL 返回旧缓存的问题
-            const separator = generatedUrl.includes('?') ? '&' : '?';
-            const fetchUrl = `${generatedUrl}${separator}_t=${new Date().getTime()}`;
+            // 使用原始生成的 URL，不添加非标准参数
+            const fetchUrl = generatedUrl;
 
             const [jsonRes, xmlRes] = await Promise.allSettled([
                 fetch(fetchUrl, { 
                     headers: { 'Accept': 'application/json' },
+                    // 仅依靠浏览器层面的 no-store
                     cache: 'no-store' 
                 }),
                 fetch(fetchUrl, { 
