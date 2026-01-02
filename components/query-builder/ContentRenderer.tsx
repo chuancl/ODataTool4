@@ -81,11 +81,17 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
 
             if (mr) {
                 // Extract Source URL
-                const src = mr.media_src || mr.edit_media || mr.uri || mr.mediaReadLink || mr.readLink;
+                let src = mr.media_src || mr.edit_media || mr.uri || mr.mediaReadLink || mr.readLink;
                 // Extract Mime Type
                 const mime = mr.content_type || mr.contentType || mr.ContentType || ''; 
 
                 if (src && typeof src === 'string') {
+                    // --- 关键修复: 自动追加 /$value ---
+                    // 如果 URL 没有扩展名且不以 /$value 结尾，通常 OData 需要 /$value 才能获取 Raw Binary
+                    if (!src.endsWith('/$value') && !/\.\w{3,4}$/.test(src) && !src.startsWith('data:')) {
+                        src = `${src}/$value`;
+                    }
+
                     // Check if it's an image
                     const isImageMime = mime.toLowerCase().startsWith('image/');
                     const isVideoMime = mime.toLowerCase().startsWith('video/');
@@ -142,25 +148,36 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         // 5. 判断 URL
         const isUrl = /^(https?:\/\/.+|\/.+\.\w+|\/.+\/.*)$/i.test(strVal);
         if (isUrl) {
+            let src = strVal;
+
             // A. 基于列名判断 (Edit Media, Src 等)
             if (columnName && /edit_media|media_src/i.test(columnName)) {
-                if (/photo|image|picture/i.test(strVal) || /photo|image|picture/i.test(columnName || '')) {
-                    return { type: 'image', src: strVal, mode: 'url' };
+                // 同样应用 /$value 修复逻辑
+                if (!src.endsWith('/$value') && !/\.\w{3,4}$/.test(src)) {
+                    src = `${src}/$value`;
                 }
-                return { type: 'file', src: strVal, mode: 'url', mime: 'application/octet-stream' };
+
+                if (/photo|image|picture/i.test(src) || /photo|image|picture/i.test(columnName || '')) {
+                    return { type: 'image', src, mode: 'url' };
+                }
+                return { type: 'file', src, mode: 'url', mime: 'application/octet-stream' };
             }
 
             // B. 基于扩展名判断
-            const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
+            const ext = src.split('.').pop()?.toLowerCase().split('?')[0];
             if (ext && EXTENSIONS[ext]) {
-                return { ...EXTENSIONS[ext], src: strVal, mode: 'url' };
+                return { ...EXTENSIONS[ext], src, mode: 'url' };
             }
             // C. 宽松判断：如果列名是 Photo，且值是 URL，就当作图片
             if (columnName && /photo|image|picture/i.test(columnName)) {
-                 return { type: 'image', src: strVal, mode: 'url_heuristic' };
+                 // 启发式：如果看起来像 OData URL，追加 $value
+                 if (!src.endsWith('/$value') && !/\.\w{3,4}$/.test(src)) {
+                    src = `${src}/$value`;
+                 }
+                 return { type: 'image', src, mode: 'url_heuristic' };
             }
             
-            if (strVal.match(/\.(img|pic|photo)/i)) return { type: 'image', src: strVal, mode: 'url' };
+            if (src.match(/\.(img|pic|photo)/i)) return { type: 'image', src, mode: 'url' };
         }
 
         // 6. 判断 Base64
