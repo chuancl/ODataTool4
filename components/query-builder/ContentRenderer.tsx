@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Image, Chip, Link, Button, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
 import { 
     FileImage, FileVideo, FileAudio, FileText, FileArchive, FileCode, 
-    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar, ExternalLink 
+    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar, ExternalLink, Image as ImageIcon
 } from 'lucide-react';
 
 interface ContentRendererProps {
@@ -45,6 +45,94 @@ const EXTENSIONS: Record<string, { type: 'image' | 'video' | 'audio' | 'file', m
     'csv': { type: 'file', icon: FileDigit },
     'json': { type: 'file', icon: FileCode },
     'xml': { type: 'file', icon: FileCode },
+};
+
+// --- SecureImage Component ---
+// Fetches the image blob to handle auth headers and override generic Content-Types (octet-stream)
+const SecureImage = ({ src, alt, className, onClick }: { src: string, alt: string, className?: string, onClick?: () => void }) => {
+    const [imgSrc, setImgSrc] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [hasError, setHasError] = useState(false);
+
+    useEffect(() => {
+        let isMounted = true;
+        
+        const fetchImage = async () => {
+            if (!src) return;
+            // Handle Data URIs directly
+            if (src.startsWith('data:')) {
+                setImgSrc(src);
+                setIsLoading(false);
+                return;
+            }
+
+            try {
+                setIsLoading(true);
+                const response = await fetch(src);
+                if (!response.ok) throw new Error('Network response was not ok');
+                
+                const blob = await response.blob();
+                
+                // Sniff Content-Type if generic
+                let mimeType = blob.type;
+                if (mimeType === 'application/octet-stream' || !mimeType) {
+                    const arr = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+                    let header = "";
+                    for(let i = 0; i < arr.length; i++) header += arr[i].toString(16).toUpperCase();
+                    
+                    if (header.startsWith('FFD8')) mimeType = 'image/jpeg';
+                    else if (header.startsWith('89504E47')) mimeType = 'image/png';
+                    else if (header.startsWith('47494638')) mimeType = 'image/gif';
+                    else if (header.startsWith('424D')) mimeType = 'image/bmp';
+                    else mimeType = 'image/jpeg'; // Fallback
+                }
+
+                const newBlob = new Blob([blob], { type: mimeType });
+                const url = URL.createObjectURL(newBlob);
+                
+                if (isMounted) {
+                    setImgSrc(url);
+                    setIsLoading(false);
+                }
+            } catch (err) {
+                // console.warn("SecureImage fetch failed, falling back to src", err);
+                if (isMounted) {
+                    setImgSrc(src); // Fallback to raw URL
+                    setHasError(true);
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        fetchImage();
+
+        return () => {
+            isMounted = false;
+            if (imgSrc && imgSrc.startsWith('blob:')) {
+                URL.revokeObjectURL(imgSrc);
+            }
+        };
+    }, [src]);
+
+    if (isLoading) {
+        return (
+            <div className={`flex items-center justify-center bg-content3 animate-pulse ${className}`}>
+                <ImageIcon size={16} className="text-default-300" />
+            </div>
+        );
+    }
+
+    return (
+        <img 
+            src={imgSrc || src} 
+            alt={alt} 
+            className={className}
+            onClick={onClick}
+            onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+            }} 
+        />
+    );
 };
 
 export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnName, onExpand }) => {
@@ -198,9 +286,9 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
     const handlePreview = () => {
         if (detected.type === 'image') {
             setPreviewContent(
-                <div className="flex flex-col gap-2 items-center">
-                    {/* Preview Modal: Use standard img for max compatibility */}
-                    <img 
+                <div className="flex flex-col gap-2 items-center w-full">
+                    {/* 使用 SecureImage 以支持 fetch blob 和类型嗅探 */}
+                    <SecureImage 
                         src={detected.src} 
                         alt="Preview" 
                         className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-sm bg-default-100/50"
@@ -325,15 +413,11 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         return (
             <div className="flex items-center gap-2 group">
                 <div className="relative w-10 h-10 rounded border border-divider bg-content2 overflow-hidden shrink-0 cursor-pointer" onClick={handlePreview}>
-                    {/* 使用原生 img 标签以获得最佳兼容性，尤其是对于无扩展名的流或 BMP 格式 */}
-                    <img 
+                    {/* 使用 SecureImage 替代原生 img，解决二进制流显示问题 */}
+                    <SecureImage 
                         src={detected.src} 
                         alt="img" 
                         className="w-full h-full object-cover"
-                        onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            // 可以在这里添加一个 fallback icon 的显示逻辑，但这里简单隐藏
-                        }}
                     />
                     <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                         <Eye size={16} className="text-white" />
