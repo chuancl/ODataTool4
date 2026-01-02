@@ -275,9 +275,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
                 onConfirmUpdate={handleConfirmUpdate}
                 onDelete={handleDeleteClick}
                 onExport={handleExport}
-                showModify={!!onUpdate}
-                showDelete={!!onDelete}
-                showExport={isRoot}
             />
 
             <div className="overflow-auto flex-1 w-full bg-content1 scrollbar-thin" ref={tableContainerRef}>
