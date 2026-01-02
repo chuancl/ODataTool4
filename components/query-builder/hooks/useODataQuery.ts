@@ -15,14 +15,19 @@ export const useODataQuery = (version: ODataVersion) => {
         setQueryResult([]);
 
         try {
-            // 添加 cache: 'no-store' 以禁用浏览器缓存，确保获取服务器最新状态
-            // 这解决了删除/更新后，重新查询仍然显示旧数据的问题
+            // --- 强制缓存穿透 (Cache Busting) ---
+            // 即便设置了 cache: 'no-store'，某些 OData 服务或中间代理层如果看到 URL 完全一致，
+            // 仍可能返回服务端的旧缓存。
+            // 解决方案：追加唯一的 _t 时间戳参数。
+            const separator = generatedUrl.includes('?') ? '&' : '?';
+            const fetchUrl = `${generatedUrl}${separator}_t=${new Date().getTime()}`;
+
             const [jsonRes, xmlRes] = await Promise.allSettled([
-                fetch(generatedUrl, { 
+                fetch(fetchUrl, { 
                     headers: { 'Accept': 'application/json' },
                     cache: 'no-store' 
                 }),
-                fetch(generatedUrl, { 
+                fetch(fetchUrl, { 
                     headers: { 'Accept': 'application/xml, application/atom+xml' },
                     cache: 'no-store'
                 })
