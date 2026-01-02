@@ -1,14 +1,14 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Image, Chip, Link, Button, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
 import { 
     FileImage, FileVideo, FileAudio, FileText, FileArchive, FileCode, 
-    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar, ExternalLink, Image as ImageIcon
+    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar 
 } from 'lucide-react';
 
 interface ContentRendererProps {
     value: any;
     columnName?: string;
-    onExpand?: () => void;
+    onExpand?: () => void; // 新增：用于触发外部展开逻辑
 }
 
 // 常见文件头魔数 (Base64前缀)
@@ -47,94 +47,6 @@ const EXTENSIONS: Record<string, { type: 'image' | 'video' | 'audio' | 'file', m
     'xml': { type: 'file', icon: FileCode },
 };
 
-// --- SecureImage Component ---
-// Fetches the image blob to handle auth headers and override generic Content-Types (octet-stream)
-const SecureImage = ({ src, alt, className, onClick }: { src: string, alt: string, className?: string, onClick?: () => void }) => {
-    const [imgSrc, setImgSrc] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [hasError, setHasError] = useState(false);
-
-    useEffect(() => {
-        let isMounted = true;
-        
-        const fetchImage = async () => {
-            if (!src) return;
-            // Handle Data URIs directly
-            if (src.startsWith('data:')) {
-                setImgSrc(src);
-                setIsLoading(false);
-                return;
-            }
-
-            try {
-                setIsLoading(true);
-                const response = await fetch(src);
-                if (!response.ok) throw new Error('Network response was not ok');
-                
-                const blob = await response.blob();
-                
-                // Sniff Content-Type if generic
-                let mimeType = blob.type;
-                if (mimeType === 'application/octet-stream' || !mimeType) {
-                    const arr = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
-                    let header = "";
-                    for(let i = 0; i < arr.length; i++) header += arr[i].toString(16).toUpperCase();
-                    
-                    if (header.startsWith('FFD8')) mimeType = 'image/jpeg';
-                    else if (header.startsWith('89504E47')) mimeType = 'image/png';
-                    else if (header.startsWith('47494638')) mimeType = 'image/gif';
-                    else if (header.startsWith('424D')) mimeType = 'image/bmp';
-                    else mimeType = 'image/jpeg'; // Fallback
-                }
-
-                const newBlob = new Blob([blob], { type: mimeType });
-                const url = URL.createObjectURL(newBlob);
-                
-                if (isMounted) {
-                    setImgSrc(url);
-                    setIsLoading(false);
-                }
-            } catch (err) {
-                // console.warn("SecureImage fetch failed, falling back to src", err);
-                if (isMounted) {
-                    setImgSrc(src); // Fallback to raw URL
-                    setHasError(true);
-                    setIsLoading(false);
-                }
-            }
-        };
-
-        fetchImage();
-
-        return () => {
-            isMounted = false;
-            if (imgSrc && imgSrc.startsWith('blob:')) {
-                URL.revokeObjectURL(imgSrc);
-            }
-        };
-    }, [src]);
-
-    if (isLoading) {
-        return (
-            <div className={`flex items-center justify-center bg-content3 animate-pulse ${className}`}>
-                <ImageIcon size={16} className="text-default-300" />
-            </div>
-        );
-    }
-
-    return (
-        <img 
-            src={imgSrc || src} 
-            alt={alt} 
-            className={className}
-            onClick={onClick}
-            onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-            }} 
-        />
-    );
-};
-
 export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnName, onExpand }) => {
     const { isOpen, onOpen, onOpenChange } = useDisclosure();
     const [previewContent, setPreviewContent] = useState<React.ReactNode>(null);
@@ -144,60 +56,20 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         
         // 1. 处理数组 (OData 一对多关系)
         if (Array.isArray(value)) {
+            // V2: { results: [...] } sometimes unwrapped, but here it's already an array
             return { type: 'array', count: value.length };
         }
 
         // 2. 处理对象 (OData 一对一关系 或 V2 Collection)
         if (typeof value === 'object') {
+            // 排除 Date 对象 (虽然 OData V2 通常返回字符串，但防守一下)
             if (value instanceof Date) return { type: 'date', content: value };
-
-            // --- OData Media Resource Detection (Robust) ---
-            let mr: any = null;
-
-            // Strategy 1: Standard __mediaresource property
-            if (value.__mediaresource) mr = value.__mediaresource;
-            // Strategy 2: Wrapped in d (rare for properties but possible)
-            else if (value.d && value.d.__mediaresource) mr = value.d.__mediaresource;
-            // Strategy 3: Object IS the media resource (contains standard media keys)
-            else if (value.edit_media || value.media_src || value.uri || value.mediaReadLink) mr = value;
-            // Strategy 4: Fuzzy Search for mediaresource key (ignore case and underscores)
-            else {
-                const keys = Object.keys(value);
-                const mediaKey = keys.find(k => k.toLowerCase().includes('mediaresource'));
-                if (mediaKey) mr = value[mediaKey];
-            }
-
-            if (mr) {
-                // Extract Source URL
-                const src = mr.media_src || mr.edit_media || mr.uri || mr.mediaReadLink || mr.readLink;
-                // Extract Mime Type
-                const mime = mr.content_type || mr.contentType || mr.ContentType || ''; 
-
-                if (src && typeof src === 'string') {
-                    // Check if it's an image
-                    const isImageMime = mime.toLowerCase().startsWith('image/');
-                    const isVideoMime = mime.toLowerCase().startsWith('video/');
-                    const isAudioMime = mime.toLowerCase().startsWith('audio/');
-                    
-                    const isImageCol = (columnName && /photo|image|picture|icon|avatar|logo/i.test(columnName));
-                    const isImageSrc = /photo|image|picture|\.jpg|\.png|\.gif/i.test(src);
-
-                    if (isImageMime || isImageCol || isImageSrc) {
-                         return { type: 'image', src, mode: 'stream_link', mime: mime || 'image/*' };
-                    }
-                    if (isVideoMime) return { type: 'video', src, mode: 'stream_link', mime };
-                    if (isAudioMime) return { type: 'audio', src, mode: 'stream_link', mime };
-
-                    // Default to file
-                    return { type: 'file', src, mode: 'stream_link', mime: mime || 'application/octet-stream' };
-                }
-            }
 
             // V2 格式: { results: [...] }
             if (Array.isArray(value.results)) {
                  return { type: 'array', count: value.results.length };
             }
-            // Metadata (纯 Metadata 对象不显示详情)
+            // Metadata
             if (value.__metadata && Object.keys(value).length === 1) {
                 return { type: 'meta' };
             }
@@ -212,6 +84,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         const strVal = String(value).trim();
 
         // 3. 增强检测：日期时间 (ISO 8601)
+        // Regex for ISO 8601-like strings (e.g. 2026-01-02T05:07:48Z, /Date(123456)/)
         if (
             /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(strVal) || 
             /^\/Date\(\d+\)\/$/.test(strVal)
@@ -219,7 +92,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             return { type: 'date', content: strVal };
         }
 
-        // 4. 判断 Data URI
+        // 4. 判断 Data URI (e.g. data:image/png;base64,...)
         if (strVal.startsWith('data:')) {
             if (strVal.startsWith('data:image/')) return { type: 'image', src: strVal, mode: 'data_uri' };
             if (strVal.startsWith('data:video/')) return { type: 'video', src: strVal, mode: 'data_uri' };
@@ -228,34 +101,20 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         }
 
         // 5. 判断 URL
-        const isUrl = /^(https?:\/\/.+|\/.+\.\w+|\/.+\/.*)$/i.test(strVal);
+        const isUrl = /^(https?:\/\/.+|\/.+\.\w+)$/i.test(strVal);
         if (isUrl) {
-            const src = strVal;
-
-            // A. 基于列名判断 (Edit Media, Src 等)
-            if (columnName && /edit_media|media_src/i.test(columnName)) {
-                if (/photo|image|picture/i.test(src) || /photo|image|picture/i.test(columnName || '')) {
-                    return { type: 'image', src, mode: 'url' };
-                }
-                return { type: 'file', src, mode: 'url', mime: 'application/octet-stream' };
-            }
-
-            // B. 基于扩展名判断
-            const ext = src.split('.').pop()?.toLowerCase().split('?')[0];
+            const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
             if (ext && EXTENSIONS[ext]) {
-                return { ...EXTENSIONS[ext], src, mode: 'url' };
+                return { ...EXTENSIONS[ext], src: strVal, mode: 'url' };
             }
-            // C. 宽松判断：如果列名是 Photo，且值是 URL，就当作图片
-            if (columnName && /photo|image|picture/i.test(columnName)) {
-                 return { type: 'image', src, mode: 'url_heuristic' };
-            }
-            
-            if (src.match(/\.(img|pic|photo)/i)) return { type: 'image', src, mode: 'url' };
+            if (strVal.match(/\.(img|pic|photo)/i)) return { type: 'image', src: strVal, mode: 'url' };
         }
 
         // 6. 判断 Base64
         const isBase64Like = strVal.length > 20 && /^[A-Za-z0-9+/]*={0,2}$/.test(strVal.replace(/\s/g, ''));
+        
         if (isBase64Like) {
+            // A. 检查标准文件头 (Magic Numbers)
             for (const [magic, mime] of Object.entries(MAGIC_NUMBERS)) {
                 if (strVal.startsWith(magic)) {
                     if (mime.startsWith('image/')) {
@@ -266,40 +125,43 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                     }
                 }
             }
-            // OLE Wrapped BMP
+
+            // B. 特殊处理：OLE Wrapped BMP
             if (strVal.length > 104) {
                 const oleSlice = strVal.substring(104, 120);
                 if (oleSlice.startsWith('Qk')) {
-                    return { type: 'image', src: `data:image/bmp;base64,${strVal.substring(104)}`, mode: 'base64_ole', mime: 'image/bmp' };
+                    return { 
+                        type: 'image', 
+                        src: `data:image/bmp;base64,${strVal.substring(104)}`, 
+                        mode: 'base64_ole', 
+                        mime: 'image/bmp' 
+                    };
                 }
             }
-            // Fallback
+
+            // C. 启发式回退 (基于列名)
             if (columnName && /image|photo|picture|icon|logo/i.test(columnName)) {
                  const fallbackMime = /picture|bmp/i.test(columnName) ? 'image/bmp' : 'image/png';
                  return { type: 'image', src: `data:${fallbackMime};base64,${strVal}`, mode: 'base64_fallback', mime: fallbackMime };
             }
         }
 
+        // 7. 普通文本
         return { type: 'text', content: strVal };
     }, [value, columnName]);
 
     const handlePreview = () => {
         if (detected.type === 'image') {
             setPreviewContent(
-                <div className="flex flex-col gap-2 items-center w-full">
-                    {/* 使用 SecureImage 以支持 fetch blob 和类型嗅探 */}
-                    <SecureImage 
+                <div className="flex flex-col gap-2 items-center">
+                    <Image 
                         src={detected.src} 
                         alt="Preview" 
-                        className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-sm bg-default-100/50"
+                        className="max-w-full max-h-[80vh] object-contain"
+                        disableSkeleton
                     />
-                     <div className="flex gap-2 mt-2">
-                        <Button size="sm" as={Link} href={detected.src} isExternal startContent={<ExternalLink size={14}/>}>
-                            Open in New Tab
-                        </Button>
-                        <div className="text-tiny text-default-400 font-mono flex items-center">
-                            {detected.mime || 'unknown mime'} | {detected.mode}
-                        </div>
+                    <div className="text-tiny text-default-400 font-mono">
+                        {detected.mime || 'unknown mime'} | {detected.mode}
                     </div>
                 </div>
             );
@@ -334,6 +196,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 startContent={<Table2 size={12}/>}
                 classNames={{ base: "h-5 text-[10px] px-1", content: "font-mono" }}
                 onClick={(e) => {
+                    // 如果传入了 onExpand，优先执行展开逻辑
                     if (onExpand) {
                         e.stopPropagation();
                         onExpand();
@@ -382,8 +245,10 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
     // --- Date Formatting ---
     if (detected.type === 'date') {
         const dateStr = String(detected.content);
+        // 尝试格式化
         let display = dateStr;
         try {
+            // 处理 /Date(123456)/ 格式
             let dateObj: Date | null = null;
             if (dateStr.startsWith('/Date(')) {
                 const ms = parseInt(dateStr.match(/\/Date\((\d+)\)\//)?.[1] || '0');
@@ -393,7 +258,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             }
             
             if (!isNaN(dateObj.getTime())) {
-                display = dateObj.toLocaleString(); 
+                display = dateObj.toLocaleString(); // Use local format
             }
         } catch(e) {}
 
@@ -413,11 +278,12 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         return (
             <div className="flex items-center gap-2 group">
                 <div className="relative w-10 h-10 rounded border border-divider bg-content2 overflow-hidden shrink-0 cursor-pointer" onClick={handlePreview}>
-                    {/* 使用 SecureImage 替代原生 img，解决二进制流显示问题 */}
-                    <SecureImage 
+                    <Image 
                         src={detected.src} 
                         alt="img" 
-                        className="w-full h-full object-cover"
+                        classNames={{ wrapper: "w-full h-full", img: "w-full h-full object-cover" }}
+                        fallbackSrc="https://via.placeholder.com/40?text=ERR"
+                        disableSkeleton
                     />
                     <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                         <Eye size={16} className="text-white" />

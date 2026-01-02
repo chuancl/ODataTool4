@@ -50,96 +50,61 @@ export const useODataQuery = (version: ODataVersion) => {
                 })
             ]);
 
-            // --- JSON / Binary 处理 ---
+            // --- JSON 处理 ---
             if (jsonRes.status === 'fulfilled') {
                 const response = jsonRes.value;
-                const contentType = response.headers.get('Content-Type') || '';
+                const text = await response.text();
 
-                // 1. 检查是否为直接的二进制媒体流 (图片/视频/PDF)
-                if (response.ok && (
-                    contentType.startsWith('image/') || 
-                    contentType.startsWith('audio/') || 
-                    contentType.startsWith('video/') || 
-                    contentType === 'application/pdf'
-                )) {
+                if (response.ok) {
                     try {
-                        const blob = await response.blob();
-                        const base64data = await new Promise<string>((resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result as string);
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                        });
+                        const data = JSON.parse(text);
+                        // 兼容多种 OData 返回格式
+                        const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
+                        setQueryResult(results);
+                        setRawJsonResult(JSON.stringify(data, null, 2));
                         
-                        // 生成合成结果供表格显示
-                        setQueryResult([{ "Media Content": base64data }]);
-                        setRawJsonResult(`// Detected Binary Content: ${contentType}\n// Size: ${blob.size} bytes\n// Preview available in Table view.`);
-                        
-                        toast.success(`成功加载媒体文件: ${contentType}\n(Media loaded successfully)`);
+                        // 成功提示 (可选，过于频繁可能打扰用户，这里仅在数据为空时提示)
+                        if (results.length === 0) {
+                            toast.info("查询成功，但返回结果为空 (Query returned no data)");
+                        }
                     } catch (e) {
-                        const msg = "读取媒体文件流失败 (Failed to read media stream)";
-                        setRawJsonResult(`// Error: ${msg}`);
+                        const msg = `JSON 解析失败 (JSON Parse Error)`;
+                        setRawJsonResult(`// ${msg}: \n${text}`);
                         toast.error(msg);
                     }
-                } 
-                // 2. 标准 JSON 处理
-                else {
-                    const text = await response.text();
-                    if (response.ok) {
-                        try {
-                            const data = JSON.parse(text);
-                            // 兼容多种 OData 返回格式
-                            const results = data.d?.results || data.value || (Array.isArray(data) ? data : []);
-                            
-                            // 如果结果是单一对象（非数组），包裹为数组以便表格显示
-                            const finalResults = Array.isArray(results) ? results : [results];
-
-                            setQueryResult(finalResults);
-                            setRawJsonResult(JSON.stringify(data, null, 2));
-                            
-                            if (finalResults.length === 0) {
-                                toast.info("查询成功，但返回结果为空 (Query returned no data)");
-                            }
-                        } catch (e) {
-                            // 如果不是 JSON，但也不是上面捕获的媒体类型
-                            const msg = `JSON 解析失败 (JSON Parse Error)`;
-                            setRawJsonResult(`// ${msg}: \n${text.substring(0, 1000)}...`);
-                            toast.error(msg);
-                        }
-                    } else {
-                        let errorBody = text;
-                        try {
-                            const jsonError = JSON.parse(text);
-                            errorBody = JSON.stringify(jsonError, null, 2);
-                        } catch (e) {}
-                        setRawJsonResult(`// HTTP Error: ${response.status} ${response.statusText}\n// 详细信息 (Details):\n${errorBody}`);
-                        toast.error(`查询失败: ${response.status} ${response.statusText}\n请查看下方 JSON 预览获取详细信息。`);
-                    }
+                } else {
+                    let errorBody = text;
+                    try {
+                        const jsonError = JSON.parse(text);
+                        errorBody = JSON.stringify(jsonError, null, 2);
+                    } catch (e) {}
+                    setRawJsonResult(`// HTTP Error: ${response.status} ${response.statusText}\n// 详细信息 (Details):\n${errorBody}`);
+                    
+                    toast.error(`查询失败: ${response.status} ${response.statusText}\n请查看下方 JSON 预览获取详细信息。`);
                 }
             } else {
                 setRawJsonResult(`// 请求失败 (Network Error): ${jsonRes.reason}`);
                 toast.error(`网络错误 (Network Error): ${jsonRes.reason}`);
             }
 
-            // --- XML 处理 (仅作辅助显示) ---
+            // --- XML 处理 (仅作辅助显示，不触发 Toast) ---
             if (xmlRes.status === 'fulfilled') {
                 const response = xmlRes.value;
-                // 如果是媒体流，text() 可能会乱码，简单 try catch
-                try {
-                    const text = await response.text();
-                    if (response.ok) {
-                         const formatted = xmlFormat(text, { 
-                             indentation: '  ', 
-                             filter: (node) => node.type !== 'Comment', 
-                             collapseContent: true, 
-                             lineSeparator: '\n' 
-                         });
-                         setRawXmlResult(formatted);
-                    } else {
-                        setRawXmlResult(`<!-- HTTP Error: ${response.status} ${response.statusText} -->\n${text}`);
+                const text = await response.text();
+                if (response.ok) {
+                    try {
+                        const formatted = xmlFormat(text, { 
+                            indentation: '  ', 
+                            filter: (node) => node.type !== 'Comment', 
+                            collapseContent: true, 
+                            lineSeparator: '\n' 
+                        });
+                        setRawXmlResult(formatted);
+                    } catch (err) {
+                        setRawXmlResult(text);
                     }
-                } catch (e) {
-                    setRawXmlResult(`<!-- Binary or Unreadable content -->`);
+                } else {
+                    setRawXmlResult(`<!-- HTTP Error: ${response.status} ${response.statusText} -->\n${text}`);
                 }
             } else {
                 setRawXmlResult(`<!-- 请求失败 (Network Error): ${xmlRes.reason} -->`);
