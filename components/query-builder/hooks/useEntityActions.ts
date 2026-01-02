@@ -98,14 +98,26 @@ export const useEntityActions = (
             // 解决 "Type information must be specified" 错误
             // 我们必须确保 payload 中包含类型元数据，且 Content-Type 设置为 verbose (见 executeBatch)
             if (version !== 'V4') {
-                if (u.item.__metadata?.type) {
-                    payload.__metadata = { type: u.item.__metadata.type };
+                let typeName = u.item.__metadata?.type;
+
+                // 兜底策略：如果数据中没有 metadata（因为之前没用 verbose 查询），
+                // 尝试根据当前 Schema 拼接类型名称：Namespace.EntityName
+                if (!typeName && schema && currentSchema) {
+                    typeName = schema.namespace ? `${schema.namespace}.${currentSchema.name}` : currentSchema.name;
+                }
+
+                if (typeName) {
+                    payload.__metadata = { type: typeName };
                 }
             } 
             // OData V4 需要 @odata.type
             else {
-                if (u.item['@odata.type']) {
-                    payload['@odata.type'] = u.item['@odata.type'];
+                let typeName = u.item['@odata.type'];
+                if (!typeName && schema && currentSchema) {
+                     typeName = schema.namespace ? `#${schema.namespace}.${currentSchema.name}` : `#${currentSchema.name}`;
+                }
+                if (typeName) {
+                    payload['@odata.type'] = typeName;
                 }
             }
 
@@ -155,7 +167,7 @@ export const useEntityActions = (
         // 确保打开模态框
         onOpen();
 
-    }, [url, version, selectedEntity, currentSchema, onOpen]);
+    }, [url, version, selectedEntity, currentSchema, schema, onOpen]);
 
 
     // --- 执行阶段：批量发送请求 ---
