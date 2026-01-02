@@ -64,9 +64,30 @@ export const collectSelectedItemsWithContext = (
     let results: EntityContextTask[] = [];
     
     items.forEach(node => {
+        // 0. 上下文自愈 (Context Self-Healing)
+        // 如果上下文缺失，尝试从数据本身的 Metadata 中恢复
+        let effectiveEntitySet = entitySet;
+        let effectiveEntityType = currentEntityType;
+
+        if ((!effectiveEntitySet || !effectiveEntityType) && typeof node === 'object' && node !== null) {
+            let typeName: string | null = null;
+            // V2/V3
+            if (node.__metadata && node.__metadata.type) typeName = node.__metadata.type;
+            // V4
+            else if (node['@odata.type']) typeName = node['@odata.type'].replace(/^#/, '');
+
+            if (typeName && schema) {
+                const shortType = typeName.split('.').pop();
+                if (shortType) {
+                    if (!effectiveEntitySet) effectiveEntitySet = findEntitySetByType(schema, shortType);
+                    if (!effectiveEntityType) effectiveEntityType = findEntityTypeObj(schema, shortType);
+                }
+            }
+        }
+
         // 1. 如果当前节点被选中，加入结果集
         if (node['__selected'] === true) {
-            results.push({ item: node, entitySet, entityType: currentEntityType });
+            results.push({ item: node, entitySet: effectiveEntitySet, entityType: effectiveEntityType });
         }
         
         // 2. 遍历子属性 (Robust Traversal)
@@ -89,8 +110,9 @@ export const collectSelectedItemsWithContext = (
                      let childSet: string | null = null;
                      let childTypeObj: EntityType | null = null;
 
-                     if (currentEntityType) {
-                         const nav = currentEntityType.navigationProperties.find(n => n.name === key);
+                     // 使用（可能已修复的）有效上下文来查找导航属性
+                     if (effectiveEntityType) {
+                         const nav = effectiveEntityType.navigationProperties.find(n => n.name === key);
                          if (nav) {
                              let targetType = nav.targetType;
                              if (targetType?.startsWith('Collection(')) targetType = targetType.slice(11, -1);
