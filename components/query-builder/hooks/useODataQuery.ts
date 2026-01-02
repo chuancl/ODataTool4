@@ -16,9 +16,8 @@ export const useODataQuery = (version: ODataVersion) => {
 
         try {
             // --- 强制缓存穿透 (Cache Busting) ---
-            // 即便设置了 cache: 'no-store'，某些 OData 服务或中间代理层如果看到 URL 完全一致，
-            // 仍可能返回服务端的旧缓存。
-            // 解决方案：追加唯一的 _t 时间戳参数。
+            // 追加唯一的 _t 时间戳参数，强制每次请求都视为新请求
+            // 这有助于解决部分 OData 服务端对相同 URL 返回旧缓存的问题
             const separator = generatedUrl.includes('?') ? '&' : '?';
             const fetchUrl = `${generatedUrl}${separator}_t=${new Date().getTime()}`;
 

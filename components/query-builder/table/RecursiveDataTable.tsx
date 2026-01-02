@@ -277,8 +277,7 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
             const isFK = fkSet.has(key);
             const fkTarget = fkInfoMap.get(key);
 
-            // FIX: Use accessor function `row => row[key]` instead of string `key`.
-            // This prevents TanStack Table from interpreting dots in OData keys (e.g. "@odata.type") as nested paths.
+            // Accessor function is safer than string ID for dots in keys
             return columnHelper.accessor(row => row[key], { 
                 id: key,
                 header: () => (
@@ -318,18 +317,36 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
         return [expanderColumn, selectColumn, indexColumn, ...dataColumns];
     }, [data, containerWidth, pkSet, fkSet, fkInfoMap]);
 
-    // FIX: Depend on column IDs string to ensure order updates when columns change (avoids "Column not found" warnings)
-    const columnIds = columns.map(c => c.id).join(',');
+    // Sync column order but prevent "Column not found" warnings
     useEffect(() => {
         if (columns.length > 0) {
-            setColumnOrder(columns.map(c => c.id as string));
+            // Only include IDs that actually exist in the current columns definition
+            const validIds = new Set(columns.map(c => c.id));
+            setColumnOrder(prev => {
+                 const newOrder = columns.map(c => c.id as string);
+                 // If the previous order had valid columns, try to preserve user's sort order 
+                 // (complex logic omitted for stability, just resetting to default for now is safer)
+                 return newOrder;
+            });
         }
-    }, [columnIds]); 
+    }, [columns]); 
+
+    // Filter columnOrder to ensure only valid columns are passed to the table state
+    // This prevents the "Column with id 'XYZ' does not exist" warning
+    const safeColumnOrder = useMemo(() => {
+        const validIds = new Set(columns.map(c => c.id));
+        return columnOrder.filter(id => validIds.has(id));
+    }, [columnOrder, columns]);
 
     const table = useReactTable({
         data,
         columns,
-        state: { sorting, columnOrder, rowSelection, expanded },
+        state: { 
+            sorting, 
+            columnOrder: safeColumnOrder, // Use the safe filtered order
+            rowSelection, 
+            expanded 
+        },
         enableRowSelection: true, 
         enableExpanding: true,
         getRowCanExpand: row => {
@@ -352,7 +369,6 @@ export const RecursiveDataTable: React.FC<RecursiveDataTableProps> = ({
     };
 
     const handleDeleteClick = () => {
-        // 获取所有被勾选的行（基于 __selected 标记）
         const selectedRows = data.filter(r => r['__selected'] === true);
         if (onDelete) {
             onDelete(selectedRows);

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Image, Chip, Link, Button, Modal, ModalContent, ModalBody, ModalHeader, useDisclosure } from "@nextui-org/react";
 import { 
     FileImage, FileVideo, FileAudio, FileText, FileArchive, FileCode, 
-    FileDigit, File, Download, Copy, Eye, Table2, Braces 
+    FileDigit, File, Download, Copy, Eye, Table2, Braces, Calendar 
 } from 'lucide-react';
 
 interface ContentRendererProps {
@@ -63,7 +63,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
         // 2. 处理对象 (OData 一对一关系 或 V2 Collection)
         if (typeof value === 'object') {
             // 排除 Date 对象 (虽然 OData V2 通常返回字符串，但防守一下)
-            if (value instanceof Date) return { type: 'text', content: value.toISOString() };
+            if (value instanceof Date) return { type: 'date', content: value };
 
             // V2 格式: { results: [...] }
             if (Array.isArray(value.results)) {
@@ -83,7 +83,16 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
 
         const strVal = String(value).trim();
 
-        // 3. 判断 Data URI (e.g. data:image/png;base64,...)
+        // 3. 增强检测：日期时间 (ISO 8601)
+        // Regex for ISO 8601-like strings (e.g. 2026-01-02T05:07:48Z, /Date(123456)/)
+        if (
+            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(strVal) || 
+            /^\/Date\(\d+\)\/$/.test(strVal)
+        ) {
+            return { type: 'date', content: strVal };
+        }
+
+        // 4. 判断 Data URI (e.g. data:image/png;base64,...)
         if (strVal.startsWith('data:')) {
             if (strVal.startsWith('data:image/')) return { type: 'image', src: strVal, mode: 'data_uri' };
             if (strVal.startsWith('data:video/')) return { type: 'video', src: strVal, mode: 'data_uri' };
@@ -91,7 +100,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             return { type: 'file', src: strVal, mode: 'data_uri' };
         }
 
-        // 4. 判断 URL
+        // 5. 判断 URL
         const isUrl = /^(https?:\/\/.+|\/.+\.\w+)$/i.test(strVal);
         if (isUrl) {
             const ext = strVal.split('.').pop()?.toLowerCase().split('?')[0];
@@ -101,7 +110,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             if (strVal.match(/\.(img|pic|photo)/i)) return { type: 'image', src: strVal, mode: 'url' };
         }
 
-        // 5. 判断 Base64
+        // 6. 判断 Base64
         const isBase64Like = strVal.length > 20 && /^[A-Za-z0-9+/]*={0,2}$/.test(strVal.replace(/\s/g, ''));
         
         if (isBase64Like) {
@@ -137,7 +146,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
             }
         }
 
-        // 6. 普通文本
+        // 7. 普通文本
         return { type: 'text', content: strVal };
     }, [value, columnName]);
 
@@ -157,7 +166,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
                 </div>
             );
             onOpen();
-        } else if (detected.type === 'text') { 
+        } else if (detected.type === 'text' || detected.type === 'date') { 
             setPreviewContent(
                 <div className="whitespace-pre-wrap break-all font-mono text-xs bg-content2 p-4 rounded max-h-[60vh] overflow-auto">
                     {String(value)}
@@ -231,6 +240,36 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ value, columnN
     
     if (detected.type === 'meta') {
         return <span className="text-default-300 text-[10px] italic">metadata</span>;
+    }
+
+    // --- Date Formatting ---
+    if (detected.type === 'date') {
+        const dateStr = String(detected.content);
+        // 尝试格式化
+        let display = dateStr;
+        try {
+            // 处理 /Date(123456)/ 格式
+            let dateObj: Date | null = null;
+            if (dateStr.startsWith('/Date(')) {
+                const ms = parseInt(dateStr.match(/\/Date\((\d+)\)\//)?.[1] || '0');
+                dateObj = new Date(ms);
+            } else {
+                dateObj = new Date(dateStr);
+            }
+            
+            if (!isNaN(dateObj.getTime())) {
+                display = dateObj.toLocaleString(); // Use local format
+            }
+        } catch(e) {}
+
+        return (
+            <div className="flex items-center gap-1.5 text-xs text-default-600 group cursor-default">
+                <Calendar size={12} className="text-default-400 shrink-0"/>
+                <span className="truncate group-hover:text-primary transition-colors" title={dateStr}>
+                    {display}
+                </span>
+            </div>
+        );
     }
 
     // --- Media Rendering ---
